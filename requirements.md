@@ -5,9 +5,10 @@ This document outlines the architecture and processing pipeline for an automated
 
 ## 2. Data Ingestion & Hardware Requirements
 * **Drone Specifications:** Flights must be programmed for grid searches yielding a Ground Sample Distance (GSD) of approximately **1.5 to 2.0 mm/pixel** to ensure meteorite candidates appear as 20-65 pixel objects. A minimum of **20% overlap** in both directions is required.
-* **Primary Training Data:** * Isolated images of meteorite proxies (painted black rocks) to establish baseline morphology and albedo.
-    * Large-scale drone survey images of the test field with scattered proxies.
-* **In-Field "Local" Data Augmentation:** The system must support immediate retraining/fine-tuning in the field. Recovery teams will place known proxies (or actual fusion-crusted specimens) into the specific search terrain, fly a quick pass, and feed those localized images into the model to train it against the native background noise.
+* **Site-Specific Primary Training Data (MANDATORY):** A new training dataset MUST be collected for every individual field site to capture localized geology, vegetation, and lighting.
+    * **Positive Class:** A dense scatter of meteorite proxies (painted black rocks) placed in a representative patch of the target terrain and flown at search altitude.
+    * **Negative Class:** Imagery of the native terrain containing no proxies, used to teach the model to ignore local false-positive hazards (shadows, distinct local rocks, flora). 
+* **In-Field "Local" Data Augmentation:** The system must support immediate retraining/fine-tuning in the field utilizing the site-specific primary training data. The augmentation pipeline will synthetically multiply this local data (via rotations and flips) to train the model against the native background noise.
 * **Compute:** The field system must be capable of processing one flight's worth of images (approx. 30 minutes of flight time) in near real-time (under 65 minutes) using an on-site GPU (e.g., RTX 2080 Ti equivalent or better).
 
 ## 3. Data Processing Strategy
