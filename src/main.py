@@ -32,7 +32,6 @@ logger = setup_logging()
 def interactive_annotator(image_path):
     """
     Opens an OpenCV GUI to let the user click on meteorites.
-    Includes a 'Dark Pass' to draw yellow circles around dark suspects.
     Returns a list of (x, y) coordinates mapped to the original image scale.
     """
     img = cv2.imread(image_path)
@@ -50,20 +49,6 @@ def interactive_annotator(image_path):
     
     display_img = cv2.resize(img, (display_w, display_h))
     ui_canvas = display_img.copy()
-
-    # The Dark Pass: Pre-calculate suspects to guide the user's eye
-    gray = cv2.cvtColor(display_img, cv2.COLOR_BGR2GRAY)
-    dark_pixels = (gray < 30).astype('uint8') * 255
-    contours, _ = cv2.findContours(dark_pixels, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    for cnt in contours:
-        if cv2.contourArea(cnt) > 2: # Filter out single-pixel noise
-            M = cv2.moments(cnt)
-            if M["m00"] != 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-                # Draw yellow suspect circles
-                cv2.circle(ui_canvas, (cx, cy), 15, (0, 255, 255), 1)
 
     clicks = []
 
@@ -160,7 +145,6 @@ def standalone_slice(input_dir, output_dir, tile_size=512, overlap=0.2, annotate
     # PHASE 1: Synchronous Annotation
     target_map = {} # Maps filename -> [(x1,y1), (x2,y2)]
     if annotate_mode:
-        logger.info("Initializing OpenCV Annotator. Look for yellow suspect circles.")
         for img_path in image_paths:
             clicks = interactive_annotator(img_path)
             target_map[img_path] = clicks
