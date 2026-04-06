@@ -111,7 +111,7 @@ def process_single_image(args):
     neg_dir = os.path.join(output_dir, "negative")
     
     # Only create pos/neg folders if we are actively using targets
-    if known_targets is != None:
+    if known_targets is not None:
         os.makedirs(pos_dir, exist_ok=True)
         os.makedirs(neg_dir, exist_ok=True)
     
@@ -122,7 +122,7 @@ def process_single_image(args):
             
             target_dir = output_dir 
             
-            if known_targets is != None:
+            if known_targets is not None:
                 target_dir = neg_dir # Default to negative
                 # Check if any clicked coordinate falls inside this tile's bounding box
                 for (mx, my) in known_targets:
