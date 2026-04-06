@@ -11,7 +11,7 @@ Heavily inspired by the methodologies of the Global Fireball Network (GFN), Andv
 Andvari utilizes an agentic framework to optimize hardware utilization, keeping the CPU pegged with I/O and preprocessing while feeding the GPU an endless stream of tensors.
 
 * **Supervisor:** Orchestrates the madness.
-* **Slicer:** Chops 44MP aerial images into digestible, overlapping 512x512 tiles across all available CPU cores. Directory-aware for batch sorting.
+* **Slicer:** Chops 44MP aerial images into digestible, overlapping 512x512 tiles across all available CPU cores. Features a native OpenCV GUI for rapid target annotation.
 * **Augmenter:** Fine-tunes the model in the field using localized background data.
 * **Inquisitor:** The GPU-bound CNN inference engine.
 * **Skeptic:** The false-positive filter. Rotates candidates and enforces density caps to weed out anomalies.
@@ -36,17 +36,18 @@ Andvari utilizes an agentic framework to optimize hardware utilization, keeping 
 ## Data Management & Folder Structure
 Before running any scripts, you must set up your data directories. **Crucial Rule: Do not reuse or overwrite folders between flights.** In field operations, data provenance is everything. 
 
-Create a `data/` directory in the root of the project. Organize your calibration flights into subfolders so the Slicer can automatically process them in bulk:
+Create a `data/` directory in the root of the project. Your raw drone dumps will go here, and the code will automatically generate the required subfolders during processing:
 
     Andvari/
     ├── models/
     │   └── base.pth                     <-- Your lab-trained base weights
     │
     └── data/
-        ├── field_1_training/            <-- Your raw calibration data
-        │   ├── positive/                <-- Raw images containing your proxies
-        │   ├── negative/                <-- Raw images of empty dirt
-        │   └── test/                    <-- Raw images for holdout validation (optional)
+        ├── raw_calibration_1/           <-- Dump raw calibration flight images here
+        │
+        ├── field_1_training/            <-- Pipeline auto-generates this directory
+        │   ├── positive/                <-- Slicer populates this based on your clicks
+        │   └── negative/                <-- Slicer populates this automatically
         │
         ├── raw_flight_1/                <-- Dump main search grid flight here
         │
@@ -57,20 +58,24 @@ Create a `data/` directory in the root of the project. Organize your calibration
 Andvari is operated via a central command-line interface with four distinct steps for a complete field deployment.
 
 ### Step 1: Prepare Training Data (`slice`)
-Before you can train the model, you need to chop your calibration flights into digestible tiles. The Slicer is directory-aware and will maintain your folder structure.
+Before you can train the model, you need to chop your calibration flights into digestible tiles. The Slicer includes an interactive UI so you can identify targets before the code shreds the images.
 
-1. Fly your calibration patches.
-2. Drop the raw, un-chopped images into their respective subfolders (`positive`, `negative`, `test`) inside your training directory.
-3. Run the Slicer on the root directory. It will automatically recreate your subfolders inside a new `sliced` directory and dump the tiles appropriately:
+1. Fly a calibration patch seeded with your painted proxy meteorites.
+2. Dump the raw images into your `./data/raw_calibration_1/` folder.
+3. Run the Slicer with the annotation flag:
 
-    python main.py slice --input ./data/field_1_training/ --output ./data/field_1_training/sliced/
+    python main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/ --annotate
 
-*(Pro-Tip: If you want the code to automatically filter out empty dirt from a folder of mixed images, append the `--triage` flag to the command. It will create a `suspects/` folder for rapid human review).*
+4. **The UI Workflow:** A window will pop up showing your first image. The code will pre-scan the image and draw **yellow circles** around anything dark. 
+    * If a yellow circle is a real proxy rock, click it (a green dot will appear). 
+    * Ignore shadows and dirt.
+    * Press **Spacebar** or **N** to advance to the next image.
+5. Once you clear the last image, the swarm will take over and instantly chop the images, routing tiles with your clicked coordinates into the `positive/` folder and everything else into the `negative/` folder.
 
 ### Step 2: Field Fine-Tuning (`train`)
-Fine-tune your lab weights to the local terrain using the newly sliced data:
+Fine-tune your lab weights to the local terrain using the data you just annotated:
 
-    python main.py train --dataset ./data/field_1_training/sliced/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
+    python main.py train --dataset ./data/field_1_training/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
 
 ### Step 3: The Main Search (`pipeline`)
 Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_flight_1` directory and unleash the swarm:
