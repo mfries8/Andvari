@@ -34,7 +34,7 @@ Andvari utilizes an agentic framework to optimize hardware utilization, keeping 
 *(Note: Adjust the PyTorch CUDA index URL to match your specific hardware and drivers).*
 
 ## Data Management & Folder Structure
-Before running any scripts, you must set up your data directories. **Crucial Rule: Do not reuse or overwrite folders between flights.** In field operations, data provenance is everything. If you need to go back and check why a rock was missed, you need the original data intact. 
+Before running any scripts, you must set up your data directories. **Crucial Rule: Do not reuse or overwrite folders between flights.** In field operations, data provenance is everything. 
 
 Create a `data/` directory in the root of the project. For every new field site or drone flight, create a new set of appropriately numbered folders:
 
@@ -43,41 +43,45 @@ Create a `data/` directory in the root of the project. For every new field site 
     │   └── base.pth                     <-- Your lab-trained base weights
     │
     └── data/
-        ├── field_1_training/            <-- Create for calibration flights
+        ├── raw_calibration_1/           <-- Dump calibration flight here
+        │
+        ├── field_1_training/            <-- Training workspace
         │   ├── positive/                <-- Put sliced tiles of proxies here
         │   └── negative/                <-- Put sliced tiles of empty dirt here
         │
-        ├── raw_flight_1/                <-- DUMP YOUR DRONE SD CARD HERE
-        │   ├── DJI_0001.JPG
-        │   └── DJI_0002.JPG
+        ├── raw_flight_1/                <-- Dump main search grid flight here
         │
-        └── flight_1_results/            <-- The pipeline will output maps and CSVs here
-
-For your next flight, simply create `raw_flight_2/` and `flight_2_results/`, and update the command-line arguments accordingly. Offload old flight folders to an external SSD to save space on your processing machine.
+        └── flight_1_results/            <-- Pipeline outputs land here
 
 ## Field Operations (Usage)
 
-Andvari is operated via a central command-line interface with three distinct modes: `train`, `pipeline`, and `review`.
+Andvari is operated via a central command-line interface with four distinct steps for a complete field deployment.
 
-### Step 1: Field Fine-Tuning (`train`)
-Before running a search, you must train the model to ignore the local dirt and shadows.
-1. Fly a calibration patch seeded with 50-100 meteorite proxies (the "positive" set).
-2. Fly an empty patch (the "negative" set).
-3. Chop these images into 512x512 tiles using the Slicer and place them in your `positive/` and `negative/` subfolders.
-4. Run the Augmenter to fine-tune your lab weights to the local terrain:
+### Step 1: Prepare Training Data (`slice`)
+Before you can train the model, you need to chop your calibration flights into digestible tiles. 
+1. Fly a patch seeded with 50-100 proxies and an empty native patch. 
+2. Dump those raw images into `./data/raw_calibration_1/`.
+3. Run the Slicer as a standalone tool to chop the raw images into 512x512 tiles:
+
+    python main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/raw_tiles/
+
+4. Open `raw_tiles/`. Manually drag any tile containing a painted rock into `positive/`, and a large sample of empty dirt tiles into `negative/`.
+
+### Step 2: Field Fine-Tuning (`train`)
+Fine-tune your lab weights to the local terrain using the data you just sorted:
 
     python main.py train --dataset ./data/field_1_training/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
 
-### Step 2: The Main Search (`pipeline`)
-Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_flight_X` directory and unleash the swarm:
+### Step 3: The Main Search (`pipeline`)
+Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_flight_1` directory and unleash the swarm:
 
     python main.py pipeline --input ./data/raw_flight_1/ --output ./data/flight_1_results/ --weights ./models/field_1_tuned.pth
 
 *Note: Depending on flight size and GPU, go grab a coffee. The Supervisor will log queue depths to the console so you can monitor progress.*
 
-### Step 3: Human Verification (`review`)
+### Step 4: Human Verification (`review`)
 Once the pipeline finishes, review the surviving candidates before deploying field personnel on foot.
 
     python main.py review
 
-This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `.csv`.
+This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `final_deployment_targets.csv`.
