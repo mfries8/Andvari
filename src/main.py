@@ -45,7 +45,7 @@ def process_single_image(args):
     height, width, _ = img.shape
     stride = int(tile_size * (1.0 - overlap))
     
-    # Ensure directories exist
+    # Ensure directories exist if using triage mode
     pos_dir = os.path.join(output_dir, "positive")
     neg_dir = os.path.join(output_dir, "negative")
     suspect_dir = os.path.join(output_dir, "suspects")
@@ -67,8 +67,6 @@ def process_single_image(args):
                 # Count very dark pixels
                 dark_pixel_count = cv2.countNonZero((gray < 30).astype('uint8'))
                 
-                # If there are ANY dark pixels (even just 10), flag it as a suspect for human review.
-                # Otherwise, banish it directly to the negative folder.
                 if dark_pixel_count > 10:
                     target_dir = suspect_dir
                 else:
@@ -81,23 +79,45 @@ def process_single_image(args):
     return tiles_saved
 
 def standalone_slice(input_dir, output_dir, tile_size=512, overlap=0.2, triage_mode=False):
-    """Chops directory of high-res images into tiles for training data prep."""
+    """Chops directory (and immediate subdirectories) of high-res images into tiles."""
     os.makedirs(output_dir, exist_ok=True)
     
     valid_exts = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
-    image_paths = [
-        os.path.join(input_dir, f) for f in os.listdir(input_dir) 
-        if f.lower().endswith(valid_exts)
+    task_args = []
+    
+    # Check for subdirectories, explicitly ignoring the output directory if it is nested
+    out_abs = os.path.abspath(output_dir)
+    subdirs = [
+        d for d in os.listdir(input_dir) 
+        if os.path.isdir(os.path.join(input_dir, d)) 
+        and os.path.abspath(os.path.join(input_dir, d)) != out_abs
     ]
     
-    if not image_paths:
-        logger.error(f"No valid images found in {input_dir}")
+    if subdirs:
+        logger.info(f"Detected subdirectories: {', '.join(subdirs)}. Mirroring structure in output.")
+        for subdir in subdirs:
+            sub_input = os.path.join(input_dir, subdir)
+            sub_output = os.path.join(output_dir, subdir)
+            os.makedirs(sub_output, exist_ok=True) # Ensure target subfolder exists
+            
+            images = [os.path.join(sub_input, f) for f in os.listdir(sub_input) if f.lower().endswith(valid_exts)]
+            for img_path in images:
+                task_args.append((img_path, sub_output, tile_size, overlap, triage_mode))
+    else:
+        # Flat directory fallback
+        images = [
+            os.path.join(input_dir, f) for f in os.listdir(input_dir) 
+            if f.lower().endswith(valid_exts)
+        ]
+        for img_path in images:
+            task_args.append((img_path, output_dir, tile_size, overlap, triage_mode))
+            
+    if not task_args:
+        logger.error(f"No valid images found in {input_dir} or its subdirectories.")
         return
 
-    logger.info(f"Found {len(image_paths)} images. Slicing across {mp.cpu_count()} CPU cores...")
+    logger.info(f"Found {len(task_args)} images. Slicing across {mp.cpu_count()} CPU cores...")
     logger.info(f"Triage Mode is {'ON' if triage_mode else 'OFF'}.")
-    
-    task_args = [(path, output_dir, tile_size, overlap, triage_mode) for path in image_paths]
     
     total_tiles = 0
     with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
@@ -150,7 +170,7 @@ def main():
         if args.triage:
             logger.info("Triage complete. Open the suspects/ folder and sort true meteorites to positive/, and the rest to negative/.")
         else:
-            logger.info("Now manually sort the output tiles into your positive/ and negative/ folders.")
+            logger.info("Batch slicing complete.")
 
     elif args.mode == "pipeline":
         if not os.path.exists(args.input):
@@ -160,12 +180,10 @@ def main():
         logger.info(f"Initializing Andvari Pipeline. Target: {args.input}")
         swarm = Supervisor(raw_image_dir=args.input, output_dir=args.output)
         
-        # Populate the queue
         for filename in os.listdir(args.input):
             if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff')):
                 swarm.raw_image_queue.put(os.path.join(args.input, filename))
                 
-        # Poison pills for shutdown
         for _ in range(mp.cpu_count()):
             swarm.raw_image_queue.put("POISON_PILL")
             
