@@ -17,16 +17,11 @@ This document outlines the architecture and processing pipeline for an automated
 * **Coordinate Mapping:** Every tile must inherit the EXIF metadata from its parent image. The pixel coordinates of any positive detection within a tile must be mathematically mapped back to the parent image's absolute coordinate space.
 
 ## 4. Machine Learning Training & Architecture
-The model will utilize a Convolutional Neural Network (CNN) structured similarly to the proven GFN architecture:
-* **Input Layer:** Sized to the tile dimensions.
-* **Convolutional Blocks:** Four sequential 2D Convolutional layers (e.g., 30, 60, 120, and 240 filters using 3x3 kernels). Each block must include:
-    * ReLU activation.
-    * Batch Normalization.
-    * Max Pooling (2x2).
-* **Fully Connected Layers:** * Flattening layer.
-    * Dense layer (1000 nodes, ReLU, Dropout 0.5).
-    * Dense layer (150 nodes, ReLU, Dropout 0.5).
-* **Output Layer:** Dense layer with 1 node and a Sigmoid activation function yielding a confidence score between 0 and 1.
+The model utilizes Transfer Learning via a pre-trained ResNet18 Convolutional Neural Network (CNN) to maximize accuracy with minimal field data.
+* **Input Layer:** Standardized to 224x224 pixel RGB tiles.
+* **Convolutional Base:** The core 18-layer residual network architecture, pre-trained on ImageNet. During field fine-tuning, these feature-extraction layers are **frozen** to preserve the model's fundamental understanding of shapes, shadows, and textures.
+* **Classification Head:** The original 1000-class output layer is replaced with a custom Fully Connected (FC) linear layer designed for binary classification (Nodes: 2).
+* **Output:** A Softmax activation function yielding a confidence score (0.0 to 1.0) indicating the probability of a meteorite proxy vs. native background terrain.
 
 ## 5. Meteorite Identification & False Positive Handling
 False positives (shadows, rabbit droppings, dark terrestrial rocks) are the primary bottleneck. The system will implement a multi-stage elimination protocol:
