@@ -4,6 +4,8 @@ import glob
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision.models as models
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import logging
@@ -71,13 +73,12 @@ def train_field_model(dataset_dir, base_weights_path, output_weights_path, epoch
         logger.warning("Training on CPU. This will take a while.")
 
     # 1. Load the Base Model
-    model = MeteoriteCNN()
-    if os.path.exists(base_weights_path):
-        model.load_state_dict(torch.load(base_weights_path))
-        logger.info(f"Loaded base weights from {base_weights_path}")
-    else:
-        logger.error("Base weights not found! Cannot fine-tune an empty brain.")
-        return
+    model = models.resnet18(weights=None)
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, 2) # 2 outputs: [Dirt, Meteorite]
+    
+    # Now it will perfectly swallow the base.pth file
+    model.load_state_dict(torch.load(base_weights_path))
 
     # 2. Freeze the Feature Extractors (Convolutional Blocks)
     # We only want to train the Fully Connected (fc1, fc2, output) layers
