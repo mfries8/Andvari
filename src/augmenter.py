@@ -1,70 +1,32 @@
 import os
-import cv2
-import glob
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.models as models
-import torch.nn as nn
-from torchvision import datasets
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
 import logging
 
 logger = logging.getLogger("Andvari.Augmenter")
 
-class FieldDataset(Dataset):
-    """
-    Custom PyTorch Dataset that loads cropped tiles from disk.
-    Expects a directory structure like:
-    dataset_dir/
-       ├── positive/ (tiles containing proxies)
-       └── negative/ (tiles of empty dirt/shadows)
-    """
-    def __init__(self, root_dir, transform=None):
-        self.positive_paths = glob.glob(os.path.join(root_dir, 'positive', '*.*'))
-        self.negative_paths = glob.glob(os.path.join(root_dir, 'negative', '*.*'))
-        
-        # Labels: 1.0 for positive (meteorite), 0.0 for negative (background)
-        self.samples = [(p, 1.0) for p in self.positive_paths] + \
-                       [(p, 0.0) for p in self.negative_paths]
-                       
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        img_path, label = self.samples[idx]
-        
-        # Load BGR with OpenCV, convert to RGB
-        img_bgr = cv2.imread(img_path)
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        
-        if self.transform:
-            # transforms expect PIL image or specific tensor format, 
-            # our custom transform pipeline handles numpy arrays
-            img_tensor = self.transform(img_rgb)
-        else:
-            img_tensor = torch.from_numpy(img_rgb).float().permute(2, 0, 1) / 255.0
-            
-        return img_tensor, torch.tensor([label], dtype=torch.float32)
-
 def get_field_transforms():
-    """The augmentation pipeline. Multiplies the value of sparse field data."""
+    """
+    The augmentation pipeline. Matches ResNet18 requirements 
+    and simulates field conditions (lighting/rotation).
+    """
     return transforms.Compose([
-        transforms.ToTensor(), # Converts numpy to tensor and scales 0-255 to 0.0-1.0
+        transforms.Resize((224, 224)), # Standard ResNet input size
+        transforms.ToTensor(),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
-        # Randomly rotate the image by up to 180 degrees
         transforms.RandomRotation(180),
-        # Slightly jitter brightness and contrast to simulate passing clouds
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1)
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-def train_field_model(dataset_dir, base_weights_path, output_weights_path, epochs=10, batch_size=32):
+def train_field_model(dataset_dir, base_weights_path, output_weights_path, epochs=10):
     """
-    Fine-tunes the base model on localized field data.
+    Fine-tunes the ResNet18 base model on localized field data.
     """
     logger.info("Augmenter Agent online. Spinning up the training forge...")
     
@@ -72,56 +34,55 @@ def train_field_model(dataset_dir, base_weights_path, output_weights_path, epoch
     if device.type == "cpu":
         logger.warning("Training on CPU. This will take a while.")
 
-    # 1. Load the Base Model
+    # 1. Setup Data Loading
+    transform = get_field_transforms()
+    try:
+        train_dataset = datasets.ImageFolder(dataset_dir, transform=transform)
+        # batch_size=8 is a safe middle ground for an RTX 2050
+        dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=0)
+    except Exception as e:
+        logger.error(f"Failed to load dataset from {dataset_dir}: {e}")
+        return
+
+    # 2. Load and Modify the Model (ResNet18)
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 2) # 2 outputs: [Dirt, Meteorite]
+    model.fc = nn.Linear(num_ftrs, 2) # [Dirt, Meteorite]
     
-    # Now it will perfectly swallow the base.pth file
-    model.load_state_dict(torch.load(base_weights_path))
+    try:
+        model.load_state_dict(torch.load(base_weights_path))
+        logger.info(f"Base weights loaded from {base_weights_path}")
+    except Exception as e:
+        logger.error(f"Could not load base weights: {e}")
+        return
 
-    # 2. Freeze the Feature Extractors (Convolutional Blocks)
-    # We only want to train the Fully Connected (fc1, fc2, output) layers
+    # 3. Freeze the early layers
+    # We keep the "visual" layers frozen and only train the final decision layers
     for name, param in model.named_parameters():
-        if "conv" in name or "BatchNorm" in name:
+        if "fc" not in name:
             param.requires_grad = False
             
     model.to(device)
-    model.train() # Set to training mode so Dropout layers become active
+    model.train()
 
-    # 3. Setup 
-    dataset = FieldDataset(root_dir=dataset_dir, transform=get_field_transforms())
-    
-    # num_workers=4 uses multicore CPU processing to augment images while the GPU trains
-    train_dataset = datasets.ImageFolder(dataset_dir, transform=transform)
-    dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=0)
-    
     # 4. Optimizer and Loss Function
-    # We only pass the parameters that require gradients (the un-frozen ones) to the optimizer
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)
-    
-    # Binary Cross Entropy Loss is standard for yes/no classification
-    criterion = nn.BCELoss()
+    optimizer = optim.Adam(model.fc.parameters(), lr=0.001)
+    criterion = nn.CrossEntropyLoss()
 
     # 5. The Training Loop
-    logger.info(f"Starting fine-tuning for {epochs} epochs on {len(dataset)} local samples.")
+    logger.info(f"Starting fine-tuning for {epochs} epochs on {len(train_dataset)} samples.")
     
     for epoch in range(epochs):
         running_loss = 0.0
         
-        for batch_idx, (inputs, labels) in enumerate(dataloader):
+        for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
             
-            # Zero the gradients
             optimizer.zero_grad()
             
-            # Forward pass
             outputs = model(inputs)
-            
-            # Calculate loss
             loss = criterion(outputs, labels)
             
-            # Backward pass and optimize
             loss.backward()
             optimizer.step()
             
