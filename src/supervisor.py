@@ -44,28 +44,49 @@ def extract_dji_telemetry(image_path):
                             break
                             
             if gps_info:
-                def parse_val(val):
-                    # Recursively strip away single-item tuples (e.g., (29.0,) -> 29.0)
-                    while isinstance(val, (tuple, list)) and len(val) == 1:
-                        val = val
-                        
-                    # Handle Pillow IFDRational or standard (numerator, denominator) tuples
+                def force_decimal(val):
+                    # The ultimate recursive unwrapper
+                    if val is None: return 0.0
+                    
+                    # Handle Pillow IFDRational objects
                     if hasattr(val, 'numerator') and hasattr(val, 'denominator'):
-                        return float(val.numerator) / float(val.denominator) if float(val.denominator) != 0 else 0.0
-                    if isinstance(val, (tuple, list)) and len(val) >= 2:
-                        return float(val) / float(val) if float(val) != 0 else 0.0
+                        n = force_decimal(val.numerator)
+                        d = force_decimal(val.denominator)
+                        return n / d if d != 0 else 0.0
                         
-                    # Handle raw extracted numbers
-                    return float(val)
+                    # Handle raw nested tuples/lists
+                    if isinstance(val, (tuple, list)):
+                        if len(val) == 0: return 0.0
+                        if len(val) == 1: return force_decimal(val)
+                        # If len >= 2, assume it's a (numerator, denominator) fraction
+                        n = force_decimal(val)
+                        d = force_decimal(val)
+                        return n / d if d != 0 else 0.0
+                        
+                    # We hit the actual number
+                    try:
+                        return float(val)
+                    except:
+                        return 0.0
 
                 def to_decimal(dms, ref):
                     if not dms or not ref: return 0.0
                     try:
-                        deg = parse_val(dms)
-                        minute = parse_val(dms)
-                        sec = parse_val(dms)
+                        # Standard Decimal Degrees fallback
+                        if not isinstance(dms, (tuple, list)):
+                            return force_decimal(dms)
+                            
+                        deg = force_decimal(dms) if len(dms) > 0 else 0.0
+                        minute = force_decimal(dms) if len(dms) > 1 else 0.0
+                        sec = force_decimal(dms) if len(dms) > 2 else 0.0
+                        
                         decimal = deg + (minute / 60.0) + (sec / 3600.0)
-                        return -decimal if str(ref).strip().upper() in ['S', 'W'] else decimal
+                        
+                        # Check for South/West to make it negative (handles byte strings or tuples safely)
+                        ref_str = str(ref).strip().upper()
+                        if 'S' in ref_str or 'W' in ref_str:
+                            decimal = -decimal
+                        return decimal
                     except Exception as math_e:
                         logger.warning(f"Math error on GPS DMS format {dms}: {math_e}")
                         return 0.0
@@ -79,10 +100,7 @@ def extract_dji_telemetry(image_path):
                     
                 alt = gps_info.get(6)
                 if alt is not None:
-                    try:
-                        telemetry["alt"] = parse_val(alt)
-                    except:
-                        pass
+                    telemetry["alt"] = force_decimal(alt)
             else:
                 logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
                 
