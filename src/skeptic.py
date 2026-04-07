@@ -15,16 +15,14 @@ def preprocess_for_inference(img_bgr):
     """Converts OpenCV BGR image into a normalized PyTorch tensor."""
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     tensor = torch.from_numpy(img_rgb).float().permute(2, 0, 1) / 255.0
-    tensor = normalize(tensor) # CRITICAL: Added missing normalization
+    tensor = normalize(tensor)
     return tensor.unsqueeze(0)
 
 def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold=0.85, density_limit=10):
     """Takes initial hits, checks density caps, rotates images, and re-evaluates."""
-    logger.info("Skeptic Agent online. Ready to crush some dreams.")
+    logger.info("[STARTUP] Skeptic Agent online. Ready to crush some dreams.")
     
     device = torch.device("cpu")
-    
-    # Instantiate the new ResNet18 architecture
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 2)
@@ -43,7 +41,7 @@ def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold
             continue
             
         if payload == "POISON_PILL":
-            logger.info("Skeptic received poison pill. Shutting down.")
+            logger.info("[SHUTDOWN] Skeptic received poison pill. Shutting down.")
             break
             
         parent_img = payload.get("parent_image")
@@ -52,7 +50,7 @@ def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold
         
         density_tracker[parent_img] += 1
         if density_tracker[parent_img] > density_limit:
-            logger.warning(f"Density cap exceeded for {parent_img}. Discarding candidate.")
+            logger.warning(f"[DENSITY CAP] Exceeded for {parent_img}. Discarding candidate.")
             continue
             
         rot_90 = cv2.rotate(tile_bgr, cv2.ROTATE_90_CLOCKWISE)
@@ -75,8 +73,9 @@ def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold
         average_confidence = (original_confidence + np.sum(predictions)) / 4.0
         
         if average_confidence >= threshold:
-            logger.info(f"Candidate verified! {parent_img} survived the Skeptic with average score: {average_confidence:.3f}")
+            logger.info(f"[VERIFIED] {parent_img} survived the Skeptic. Score: {average_confidence:.3f}")
             payload["confidence"] = float(average_confidence)
             verified_queue.put(payload)
         else:
-            logger.debug(f"Candidate rejected. Rotation average dropped to {average_confidence:.3f}")
+            # Elevated from DEBUG to INFO so you can see the CPU working
+            logger.info(f"[REJECTED] {parent_img} rotation average dropped to {average_confidence:.3f}.")
