@@ -92,7 +92,7 @@ def train_field_model(dataset_dir, base_weights_path, output_weights_path, epoch
     dataset = FieldDataset(root_dir=dataset_dir, transform=get_field_transforms())
     
     # num_workers=4 uses multicore CPU processing to augment images while the GPU trains
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
     
     # 4. Optimizer and Loss Function
     # We only pass the parameters that require gradients (the un-frozen ones) to the optimizer
