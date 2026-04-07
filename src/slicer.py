@@ -81,11 +81,17 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
         pos_images = glob.glob(os.path.join(input_dir, "*.[jJ][pP][gG]"))
 
     if pos_images:
-        logger.info(f"Loading {len(pos_images)} positive images. Click targets, SPACEBAR to advance.")
-        for img_path in pos_images:
+        total_pos = len(pos_images)
+        logger.info(f"Loading {total_pos} positive images. Click targets, SPACEBAR to advance.")
+        
+        # We wrap the loop in enumerate to track the current index
+        for current_idx, img_path in enumerate(pos_images, start=1):
             img = cv2.imread(img_path)
             if img is None:
                 continue
+
+            # --- THE NEW PROGRESS LOGGER ---
+            logger.info(f"Image [{current_idx} out of {total_pos}]: Annotating {os.path.basename(img_path)}")
 
             orig_h, orig_w = img.shape[:2]
             ui_height = 900
