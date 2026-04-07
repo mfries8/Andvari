@@ -11,12 +11,6 @@ logger = logging.getLogger("Andvari.Cartographer")
 
 R_EARTH = 6378137.0 
 
-class CartographerConfig:
-    def __init__(self, fov_horizontal_deg=77.0, image_width_px=8192, image_height_px=5460):
-        self.fov_h = math.radians(fov_horizontal_deg)
-        self.width = image_width_px
-        self.height = image_height_px
-
 def generate_kml(csv_path, kml_path):
     kml_header = """<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>Andvari Verified Candidates</name>\n"""
     kml_footer = """  </Document>\n</kml>"""
@@ -37,13 +31,17 @@ def generate_kml(csv_path, kml_path):
                     kml_file.write(placemark)
         kml_file.write(kml_footer)
 
-def cartographer_worker(verified_queue, output_dir, config=CartographerConfig()):
+def cartographer_worker(verified_queue, output_dir, config=None):
     logger.info("Cartographer Agent online. Mapping the treasure.")
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(output_dir, "verified_candidates.csv")
     kml_path = os.path.join(output_dir, "verified_candidates.kml")
     thumb_dir = os.path.join(output_dir, "thumbnails")
     os.makedirs(thumb_dir, exist_ok=True)
+    
+    fov_h = math.radians(config["camera"]["fov_horizontal_deg"]) if config else math.radians(77.0)
+    img_w = config["camera"]["image_width_px"] if config else 8192
+    img_h = config["camera"]["image_height_px"] if config else 5460
     
     if not os.path.exists(csv_path):
         with open(csv_path, 'w', newline='') as f:
@@ -58,13 +56,11 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
         except Empty:
             continue
             
-        if payload == "POISON_PILL":
-            logger.info("Cartographer received poison pill. Finalizing KML and shutting down.")
+        if payload == "SHUTDOWN_COMMAND":
+            logger.info("Cartographer received shutdown command. Finalizing KML and shutting down.")
             generate_kml(csv_path, kml_path)
             break
             
-        # THE FIX: Try-Catch is now INSIDE the loop. 
-        # A bad payload just gets skipped.
         try:
             telemetry = payload.get("telemetry")
             drone_lat = telemetry.get("lat")
@@ -72,17 +68,16 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
             drone_alt = telemetry.get("alt")
             drone_heading = math.radians(telemetry.get("heading", 0.0))
             
-            ground_width_m = 2.0 * drone_alt * math.tan(config.fov_h / 2.0)
-            gsd = ground_width_m / config.width
+            ground_width_m = 2.0 * drone_alt * math.tan(fov_h / 2.0)
+            gsd = ground_width_m / img_w
             
-            # Foolproof integer extraction
             tile_height, tile_width = payload.get("tile_data").shape[:2]
             
             hit_px_x = float(payload.get("offset_x")) + (float(tile_width) / 2.0)
             hit_px_y = float(payload.get("offset_y")) + (float(tile_height) / 2.0)
             
-            center_x = config.width / 2.0
-            center_y = config.height / 2.0
+            center_x = img_w / 2.0
+            center_y = img_h / 2.0
             
             delta_px_x = hit_px_x - center_x
             delta_px_y = center_y - hit_px_y 
