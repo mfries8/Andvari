@@ -28,17 +28,18 @@ def generate_kml(csv_path, kml_path):
     with open(kml_path, 'w') as kml_file:
         kml_file.write(kml_header)
         
-        with open(csv_path, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                placemark = f"""    <Placemark>
+        if os.path.exists(csv_path):
+            with open(csv_path, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    placemark = f"""    <Placemark>
       <name>Candidate {row['ID']}</name>
       <description>Confidence: {row['Confidence']}</description>
       <Point>
         <coordinates>{row['Longitude']},{row['Latitude']},0</coordinates>
       </Point>
     </Placemark>\n"""
-                kml_file.write(placemark)
+                    kml_file.write(placemark)
                 
         kml_file.write(kml_footer)
 
@@ -71,8 +72,7 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
             
         if payload == "POISON_PILL":
             logger.info("Cartographer received poison pill. Finalizing KML and shutting down.")
-            if os.path.exists(csv_path):
-                generate_kml(csv_path, kml_path)
+            generate_kml(csv_path, kml_path)
             break
             
         telemetry = payload.get("telemetry")
@@ -81,52 +81,42 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
         drone_alt = telemetry.get("alt")
         drone_heading = math.radians(telemetry.get("heading", 0.0))
         
-        # 1. Calculate Ground Sample Distance (GSD) in meters/pixel
-        # Assume nadir (straight down) pointing for simplification. 
-        # GSD = (2 * Altitude * tan(FOV / 2)) / Image Width
         ground_width_m = 2.0 * drone_alt * math.tan(config.fov_h / 2.0)
         gsd = ground_width_m / config.width
         
-        # 2. Find pixel offset from the CENTER of the parent image
-        # Slicer payload provides top-left corner of the tile. We want the center of the tile.
-        tile_size = payload.get("tile_data").shape 
-        hit_px_x = payload.get("offset_x") + (tile_size / 2.0)
-        hit_px_y = payload.get("offset_y") + (tile_size / 2.0)
+        # --- THE FIX: Extracting integers from the shape tuple ---
+        tile_shape = payload.get("tile_data").shape 
+        tile_height = tile_shape
+        tile_width = tile_shape
+        
+        hit_px_x = payload.get("offset_x") + (tile_width / 2.0)
+        hit_px_y = payload.get("offset_y") + (tile_height / 2.0)
+        # ---------------------------------------------------------
         
         center_x = config.width / 2.0
         center_y = config.height / 2.0
         
-        # Delta pixels (Standard Cartesian: X right, Y up)
-        # Image coordinates usually have Y going down, so we invert Y
         delta_px_x = hit_px_x - center_x
         delta_px_y = center_y - hit_px_y 
         
-        # 3. Convert pixel delta to meters on the ground
         dx_m = delta_px_x * gsd
         dy_m = delta_px_y * gsd
         
-        # 4. Rotate the vector by the drone's compass heading (Yaw)
-        # This aligns the drone's internal coordinate system with True North
         dx_north = dx_m * math.cos(drone_heading) - dy_m * math.sin(drone_heading)
         dy_north = dx_m * math.sin(drone_heading) + dy_m * math.cos(drone_heading)
         
-        # 5. Translate meters to Delta Latitude / Longitude
         delta_lat = (dy_north / R_EARTH) * (180.0 / math.pi)
-        # Longitude scaling depends on current Latitude
         delta_lon = (dx_north / (R_EARTH * math.cos(math.pi * drone_lat / 180.0))) * (180.0 / math.pi)
         
         final_lat = drone_lat + delta_lat
         final_lon = drone_lon + delta_lon
         
-        # 6. Save Artifacts
         parent_name = os.path.basename(payload.get("parent_image"))
         thumb_name = f"candidate_{candidate_id:04d}_{parent_name}"
         thumb_path = os.path.join(thumb_dir, thumb_name)
         
-        # Save the BGR tile for human review
         cv2.imwrite(thumb_path, payload.get("tile_data"))
         
-        # Append to CSV
         with open(csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
