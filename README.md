@@ -91,6 +91,14 @@ The neural network is highly specialized to the specific dirt, vegetation, and l
 * **When to REUSE weights (Skip Steps 1 & 2):** If you are flying back-to-back grids over the same terrain, on the same day, under similar weather conditions, skip the training. Proceed directly to Step 3 with your existing `.pth` file.
 * **When to RETRAIN (Run Steps 1 & 2):** You MUST fly a new calibration patch and retrain the model if you change locations (e.g., dry lake to grassy field), if the lighting drastically changes (heavy overcast vs. high noon), or if the terrain gets wet (which completely alters soil albedo). 
 
+### Step 0: Download the Base Neural Brain
+Before you process your first batch of images, you need the foundational network structure (`base.pth`). Run the built-in generator script from the project root to fetch the pre-trained ImageNet core and format it for our binary `[Dirt, Meteorite]` classifier:
+
+```bash
+python generate_base.py
+```
+This will automatically construct your default weights in `./models/base.pth`.
+
 ### Step 1: Prepare Training Data (`slice`)
 Before you can train the model on a new environment, you need to chop your calibration flights into digestible tiles. 
 
