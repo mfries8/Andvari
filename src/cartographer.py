@@ -38,32 +38,34 @@ def generate_kml(csv_path, kml_path):
         kml_file.write(kml_footer)
 
 def cartographer_worker(verified_queue, output_dir, config=CartographerConfig()):
-    try:
-        logger.info("Cartographer Agent online. Mapping the treasure.")
-        os.makedirs(output_dir, exist_ok=True)
-        csv_path = os.path.join(output_dir, "verified_candidates.csv")
-        kml_path = os.path.join(output_dir, "verified_candidates.kml")
-        thumb_dir = os.path.join(output_dir, "thumbnails")
-        os.makedirs(thumb_dir, exist_ok=True)
-        
-        if not os.path.exists(csv_path):
-            with open(csv_path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(["ID", "Latitude", "Longitude", "Confidence", "Parent_Image", "Thumbnail"])
-                
-        candidate_id = 1
-        
-        while True:
-            try:
-                payload = verified_queue.get(timeout=3)
-            except Empty:
-                continue
-                
-            if payload == "POISON_PILL":
-                logger.info("Cartographer received poison pill. Finalizing KML and shutting down.")
-                generate_kml(csv_path, kml_path)
-                break
-                
+    logger.info("Cartographer Agent online. Mapping the treasure.")
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = os.path.join(output_dir, "verified_candidates.csv")
+    kml_path = os.path.join(output_dir, "verified_candidates.kml")
+    thumb_dir = os.path.join(output_dir, "thumbnails")
+    os.makedirs(thumb_dir, exist_ok=True)
+    
+    if not os.path.exists(csv_path):
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["ID", "Latitude", "Longitude", "Confidence", "Parent_Image", "Thumbnail"])
+            
+    candidate_id = 1
+    
+    while True:
+        try:
+            payload = verified_queue.get(timeout=3)
+        except Empty:
+            continue
+            
+        if payload == "POISON_PILL":
+            logger.info("Cartographer received poison pill. Finalizing KML and shutting down.")
+            generate_kml(csv_path, kml_path)
+            break
+            
+        # THE FIX: Try-Catch is now INSIDE the loop. 
+        # A bad payload just gets skipped.
+        try:
             telemetry = payload.get("telemetry")
             drone_lat = telemetry.get("lat")
             drone_lon = telemetry.get("lon")
@@ -73,12 +75,11 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
             ground_width_m = 2.0 * drone_alt * math.tan(config.fov_h / 2.0)
             gsd = ground_width_m / config.width
             
-            tile_shape = payload.get("tile_data").shape 
-            tile_height = tile_shape
-            tile_width = tile_shape
+            # Foolproof integer extraction
+            tile_height, tile_width = payload.get("tile_data").shape[:2]
             
-            hit_px_x = payload.get("offset_x") + (tile_width / 2.0)
-            hit_px_y = payload.get("offset_y") + (tile_height / 2.0)
+            hit_px_x = float(payload.get("offset_x")) + (float(tile_width) / 2.0)
+            hit_px_y = float(payload.get("offset_y")) + (float(tile_height) / 2.0)
             
             center_x = config.width / 2.0
             center_y = config.height / 2.0
@@ -102,7 +103,6 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
             thumb_name = f"candidate_{candidate_id:04d}_{parent_name}"
             thumb_path = os.path.join(thumb_dir, thumb_name)
             
-            # CRITICAL: Contiguous array enforcement for saving
             safe_tile = np.ascontiguousarray(payload.get("tile_data"))
             cv2.imwrite(thumb_path, safe_tile)
             
@@ -120,6 +120,6 @@ def cartographer_worker(verified_queue, output_dir, config=CartographerConfig())
             logger.info(f"Mapped Candidate {candidate_id} -> Lat: {final_lat:.7f}, Lon: {final_lon:.7f}")
             candidate_id += 1
             
-    except Exception as e:
-        logger.error(f"[FATAL ERROR] Cartographer crashed: {e}")
-        logger.error(traceback.format_exc())
+        except Exception as e:
+            logger.error(f"[NON-FATAL ERROR] Cartographer choked on candidate {candidate_id}: {e}")
+            logger.error(traceback.format_exc())
