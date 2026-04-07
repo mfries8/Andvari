@@ -19,8 +19,8 @@ def preprocess_for_inference(img_bgr):
     return tensor.unsqueeze(0)
 
 def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold=0.85, density_limit=10):
+    logger.info("[STARTUP] Skeptic Agent online. Ready to crush some dreams.")
     try:
-        logger.info("[STARTUP] Skeptic Agent online. Ready to crush some dreams.")
         device = torch.device("cpu")
         model = models.resnet18(weights=None)
         num_ftrs = model.fc.in_features
@@ -31,23 +31,27 @@ def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold
             model.load_state_dict(torch.load(weights_path, map_location=device))
         
         model.eval()
-        density_tracker = defaultdict(int)
-        
-        while True:
-            try:
-                payload = candidate_queue.get(timeout=2)
-            except Empty:
-                continue
-                
-            if payload == "POISON_PILL":
-                logger.info("[SHUTDOWN] Skeptic received poison pill. Shutting down.")
-                break
-                
+    except Exception as e:
+        logger.error(f"[FATAL ERROR] Skeptic failed to initialize model: {e}")
+        return
+
+    density_tracker = defaultdict(int)
+    
+    while True:
+        try:
+            payload = candidate_queue.get(timeout=2)
+        except Empty:
+            continue
+            
+        if payload == "POISON_PILL":
+            logger.info("[SHUTDOWN] Skeptic received poison pill. Shutting down.")
+            break
+            
+        # THE FIX: Try-Catch inside the loop
+        try:
             parent_img = payload.get("parent_image")
             original_confidence = payload.get("confidence")
             
-            # CRITICAL: Force the memory slice into a contiguous array. 
-            # OpenCV will silently segfault if handed a fragmented memory view.
             tile_bgr = np.ascontiguousarray(payload.get("tile_data"))
             
             density_tracker[parent_img] += 1
@@ -81,6 +85,6 @@ def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold
             else:
                 logger.info(f"[REJECTED] {parent_img} rotation average dropped to {average_confidence:.3f}.")
                 
-    except Exception as e:
-        logger.error(f"[FATAL ERROR] Skeptic crashed: {e}")
-        logger.error(traceback.format_exc())
+        except Exception as e:
+            logger.error(f"[NON-FATAL ERROR] Skeptic choked on an image: {e}")
+            logger.error(traceback.format_exc())
