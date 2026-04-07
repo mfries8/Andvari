@@ -88,11 +88,11 @@ def train_field_model(dataset_dir, base_weights_path, output_weights_path, epoch
     model.to(device)
     model.train() # Set to training mode so Dropout layers become active
 
-    # 3. Setup DataLoader
+    # 3. Setup 
     dataset = FieldDataset(root_dir=dataset_dir, transform=get_field_transforms())
     
     # num_workers=4 uses multicore CPU processing to augment images while the GPU trains
-    dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=0)
+    dataloader = DataLoader(train_dataset, batch_size=4, shuffle=True, num_workers=0)
     
     # 4. Optimizer and Loss Function
     # We only pass the parameters that require gradients (the un-frozen ones) to the optimizer
