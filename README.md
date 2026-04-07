@@ -11,7 +11,7 @@ Heavily inspired by the methodologies of the Global Fireball Network (GFN), Andv
 Andvari utilizes an agentic framework to optimize hardware utilization, keeping the CPU pegged with I/O and preprocessing while feeding the GPU an endless stream of tensors.
 
 * **Supervisor:** Orchestrates the madness.
-* **Slicer:** Chops 44MP aerial images into digestible, overlapping 512x512 tiles across all available CPU cores. Features a native OpenCV GUI for rapid target annotation.
+* **Slicer:** Chops 44MP aerial images into digestible, overlapping tiles across all available CPU cores. Features a native OpenCV GUI for rapid target annotation.
 * **Augmenter:** Fine-tunes a pre-trained ResNet18 model in the field using localized background data.
 * **Inquisitor:** The GPU-bound CNN inference engine.
 * **Skeptic:** The false-positive filter. Rotates candidates and enforces density caps to weed out anomalies.
@@ -70,13 +70,15 @@ The neural network is highly specialized to the specific dirt, vegetation, and l
 * **When to RETRAIN (Run Steps 1 & 2):** You MUST fly a new calibration patch and retrain the model if you change locations (e.g., dry lake to grassy field), if the lighting drastically changes (heavy overcast vs. high noon), or if the terrain gets wet (which completely alters soil albedo). 
 
 ### Step 1: Prepare Training Data (`slice`)
-Before you can train the model on a new environment, you need to chop your calibration flights into digestible tiles. The Slicer includes an interactive UI so you can identify targets before the code shreds the images.
+Before you can train the model on a new environment, you need to chop your calibration flights into digestible tiles. 
+
+*Hardware Note:* Mobile GPUs (like the RTX 2050) will run Out of Memory (OOM) if you try to train on native 512x512 tiles. You must use `--tile_size 224` to match the native ResNet18 architecture and save VRAM.
 
 1. Fly a calibration patch seeded with your painted proxy meteorites.
 2. Dump the raw images into your `./data/raw_calibration_1/` folder.
-3. Run the Slicer with the annotation flag:
+3. Run the Slicer with the annotation and tile_size flags:
 
-    python src/main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/ --annotate
+    python src/main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/ --annotate --tile_size 224
 
 4. **The UI Workflow:** A window will pop up showing your first image. 
     * If you see a real proxy rock, click it (a green dot will appear). 
@@ -85,7 +87,7 @@ Before you can train the model on a new environment, you need to chop your calib
 5. Once you clear the last image, the swarm will take over and instantly chop the images, routing tiles with your clicked coordinates into the `positive/` folder and everything else into the `negative/` folder.
 
 ### Step 2: Field Fine-Tuning (`train`)
-Fine-tune your foundational `base.pth` weights to the local terrain using the data you just annotated:
+Fine-tune your foundational `base.pth` weights to the local terrain using the 224x224 data you just annotated:
 
     python src/main.py train --dataset ./data/field_1_training/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
 
