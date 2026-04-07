@@ -12,7 +12,7 @@ logger = logging.getLogger("Andvari.Auditor")
 app = FastAPI(title="Andvari Rapid Review UI")
 
 # In a real deployment, these paths would be passed via environment variables or a config file
-OUTPUT_DIR = "./data/output"
+OUTPUT_DIR = "./data/flight_1_results"
 CSV_PATH = os.path.join(OUTPUT_DIR, "verified_candidates.csv")
 FINAL_CSV_PATH = os.path.join(OUTPUT_DIR, "final_deployment_targets.csv")
 THUMB_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
