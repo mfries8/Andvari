@@ -18,8 +18,12 @@ def preprocess_for_inference(img_bgr):
     tensor = normalize(tensor)
     return tensor.unsqueeze(0)
 
-def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold=0.85, density_limit=10):
+def skeptic_worker(candidate_queue, verified_queue, weights_path=None, config=None):
     logger.info("[STARTUP] Skeptic Agent online. Ready to crush some dreams.")
+    
+    threshold = config["skeptic"]["confidence_threshold"] if config else 0.85
+    density_limit = config["skeptic"]["density_limit"] if config else 10
+    
     try:
         device = torch.device("cpu")
         model = models.resnet18(weights=None)
@@ -43,15 +47,13 @@ def skeptic_worker(candidate_queue, verified_queue, weights_path=None, threshold
         except Empty:
             continue
             
-        if payload == "POISON_PILL":
-            logger.info("[SHUTDOWN] Skeptic received poison pill. Shutting down.")
+        if payload == "SHUTDOWN_COMMAND":
+            logger.info("[SHUTDOWN] Skeptic received shutdown command. Shutting down.")
             break
             
-        # THE FIX: Try-Catch inside the loop
         try:
             parent_img = payload.get("parent_image")
             original_confidence = payload.get("confidence")
-            
             tile_bgr = np.ascontiguousarray(payload.get("tile_data"))
             
             density_tracker[parent_img] += 1
