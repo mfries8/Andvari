@@ -2,31 +2,26 @@
     "camera": {
         "_comment_fov": "Horizontal Field of View of the drone camera in degrees. Used by the Cartographer for pixel-to-meter distance scaling.",
         "fov_horizontal_deg": 77.0,
-        
         "_comment_width": "Native width of the raw drone image in pixels.",
         "image_width_px": 8192,
-        
         "_comment_height": "Native height of the raw drone image in pixels.",
         "image_height_px": 5460
     },
     "slicer": {
         "_comment_tile": "Pixel dimension for the square crops sent to the neural network. Must match the model's expected input.",
         "tile_size": 224,
-        
         "_comment_overlap": "Percentage of overlap (0.0 to 1.0) between chopped tiles. Prevents meteorites lying directly on a cut-line from being missed.",
         "overlap": 0.2
     },
     "inquisitor": {
         "_comment_batch": "Number of tiles processed simultaneously by the GPU. Lower this to 16 or 8 if you experience CUDA 'Out of Memory' crashes.",
         "batch_size": 32,
-        
         "_comment_threshold": "Minimum probability score (0.0 to 1.0) required for the raw GPU to flag a tile as a potential meteorite.",
-        "confidence_threshold": 0.98
+        "confidence_threshold": 0.70
     },
     "skeptic": {
         "_comment_threshold": "Minimum probability score required after the CPU rotates and re-evaluates the candidate 3 times to weed out false positives.",
         "confidence_threshold": 0.85,
-        
         "_comment_density": "Maximum number of candidates allowed per 44MP image. Automatically discards massive clusters caused by lighting glitches or specific terrain features.",
         "density_limit": 10
     }

@@ -71,7 +71,9 @@ Andvari/
 │   └── base.pth                     <-- Your lab-trained ResNet18 base weights
 │
 └── data/
-    ├── raw_training_data/           <-- Dump raw calibration flight images here (Subfolders: positive/ negative/)
+    ├── raw_training_data/           <-- Dump raw calibration flight images here
+    │   ├── positive/                <-- Images with calibration target proxies
+    │   └── negative/                <-- Images without proxies
     │
     ├── sliced_training_data/        <-- Pipeline auto-generates this directory
     │   ├── positive/                <-- Slicer populates this based on your clicks
