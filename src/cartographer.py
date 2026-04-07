@@ -85,11 +85,11 @@ def cartographer_worker(verified_queue, output_dir, config=None):
             dx_m = delta_px_x * gsd
             dy_m = delta_px_y * gsd
             
-            dx_north = dx_m * math.cos(drone_heading) - dy_m * math.sin(drone_heading)
+            dx_east = dx_m * math.cos(drone_heading) - dy_m * math.sin(drone_heading)
             dy_north = dx_m * math.sin(drone_heading) + dy_m * math.cos(drone_heading)
             
             delta_lat = (dy_north / R_EARTH) * (180.0 / math.pi)
-            delta_lon = (dx_north / (R_EARTH * math.cos(math.pi * drone_lat / 180.0))) * (180.0 / math.pi)
+            delta_lon = (dx_east / (R_EARTH * math.cos(math.pi * drone_lat / 180.0))) * (180.0 / math.pi)
             
             final_lat = drone_lat + delta_lat
             final_lon = drone_lon + delta_lon

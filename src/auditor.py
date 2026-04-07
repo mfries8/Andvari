@@ -12,7 +12,7 @@ logger = logging.getLogger("Andvari.Auditor")
 app = FastAPI(title="Andvari Rapid Review UI")
 
 # In a real deployment, these paths would be passed via environment variables or a config file
-OUTPUT_DIR = "./data/flight_1_results"
+OUTPUT_DIR = "./data/output"
 CSV_PATH = os.path.join(OUTPUT_DIR, "verified_candidates.csv")
 FINAL_CSV_PATH = os.path.join(OUTPUT_DIR, "final_deployment_targets.csv")
 THUMB_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
@@ -42,7 +42,7 @@ HTML_TEMPLATE = """
     <h1>Candidate Review ({{ current_idx + 1 }} / {{ total }})</h1>
     
     {% if candidate %}
-        <img src="/{{ candidate['Thumbnail'] }}" alt="Meteorite Candidate">
+        <img src="/thumbnails/{{ candidate['Thumbnail'] }}" alt="Meteorite Candidate">
         <br>
         <div class="data-panel">
             <strong>ID:</strong> {{ candidate['ID'] }} <br>
@@ -101,8 +101,8 @@ async def review_ui(request: Request):
     candidate = None
     if state.current_idx < len(state.candidates):
         candidate = state.candidates[state.current_idx]
-        # Fix path formatting for the web server
-        candidate['Thumbnail'] = candidate['Thumbnail'].replace('\\', '/').lstrip('./')
+        # Fix path formatting for the web server by retaining only the filename since it mounts to /thumbnails
+        candidate['Thumbnail'] = os.path.basename(candidate['Thumbnail'])
         
     return templates.TemplateResponse("template.html", {
         "request": request,

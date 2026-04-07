@@ -71,15 +71,15 @@ Andvari/
 │   └── base.pth                     <-- Your lab-trained ResNet18 base weights
 │
 └── data/
-    ├── raw_calibration_1/           <-- Dump raw calibration flight images here
+    ├── raw_training_data/           <-- Dump raw calibration flight images here (Subfolders: positive/ negative/)
     │
-    ├── field_1_training/            <-- Pipeline auto-generates this directory
+    ├── sliced_training_data/        <-- Pipeline auto-generates this directory
     │   ├── positive/                <-- Slicer populates this based on your clicks
     │   └── negative/                <-- Slicer populates this automatically
     │
-    ├── raw_flight_1/                <-- Dump main search grid flight here
+    ├── raw_test_data/               <-- Dump main search grid flight here
     │
-    └── flight_1_results/            <-- Pipeline outputs land here
+    └── output/                      <-- Pipeline outputs land here
 ```
 
 ---
@@ -97,11 +97,11 @@ Before you can train the model on a new environment, you need to chop your calib
 *Hardware Note:* Mobile GPUs (like the RTX 2050) will run Out of Memory (OOM) if you try to train on native 512x512 tiles. You must use `--tile_size 224` to match the native ResNet18 architecture and save VRAM.
 
 1. Fly a calibration patch seeded with your painted proxy meteorites.
-2. Dump the raw images into your `./data/raw_calibration_1/` folder.
+2. Dump the raw images into your `./data/raw_training_data/` folder inside either `positive/` or `negative/` subfolders.
 3. Run the Slicer with the annotation and tile_size flags:
 
 ```bash
-python src/main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/ --annotate --tile_size 224
+python src/main.py slice --input ./data/raw_training_data/ --output ./data/sliced_training_data/ --annotate --tile_size 224
 ```
 
 4. **The UI Workflow:** A window will pop up showing your first image. 
@@ -114,14 +114,14 @@ python src/main.py slice --input ./data/raw_calibration_1/ --output ./data/field
 Fine-tune your foundational `base.pth` weights to the local terrain using the 224x224 data you just annotated:
 
 ```bash
-python src/main.py train --dataset ./data/field_1_training/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
+python src/main.py train --dataset ./data/sliced_training_data/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
 ```
 
 ### Step 3: The Main Search (`pipeline`)
-Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_flight_1` directory and unleash the swarm:
+Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_test_data` directory and unleash the swarm:
 
 ```bash
-python src/main.py pipeline --input ./data/raw_flight_1/ --output ./data/flight_1_results/ --weights ./models/field_1_tuned.pth
+python src/main.py pipeline --input ./data/raw_test_data/ --output ./data/output/ --weights ./models/field_1_tuned.pth
 ```
 
 *Note: The Supervisor will output `[n out of N]` progress trackers to the console so you can monitor the GPU's pace.*

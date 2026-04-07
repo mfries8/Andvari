@@ -1,13 +1,13 @@
 import os
 import sys
 import logging
+import asyncio
 import multiprocessing as mp
-import cv2
-from PIL import Image, ExifTags
 
 from inquisitor import inquisitor_worker
 from skeptic import skeptic_worker
 from cartographer import cartographer_worker
+from slicer import pool_slicer_worker, init_worker
 
 def setup_logging():
     logger = logging.getLogger("Andvari.Supervisor")
@@ -19,85 +19,6 @@ def setup_logging():
 
 logger = setup_logging()
 
-def extract_dji_telemetry(image_path):
-    """Intercepts the image to extract native DJI GPS data before OpenCV strips it."""
-    telemetry = {"lat": 0.0, "lon": 0.0, "alt": 50.0, "heading": 0.0, "pitch": -90.0}
-    try:
-        import os
-        import logging
-        from PIL import Image, ExifTags
-        
-        logger = logging.getLogger("Andvari.Supervisor")
-        
-        with Image.open(image_path) as img:
-            gps_info = None
-            if hasattr(img, "getexif"):
-                exif = img.getexif()
-                if hasattr(exif, "get_ifd"):
-                    gps_info = exif.get_ifd(0x8825)
-            
-            if not gps_info and hasattr(img, '_getexif'):
-                raw_exif = img._getexif()
-                if raw_exif:
-                    for k, v in raw_exif.items():
-                        if ExifTags.TAGS.get(k) == 'GPSInfo':
-                            gps_info = v
-                            break
-                            
-            if gps_info:
-                def safe_float(val):
-                    # 1. Native conversion (handles ints, floats, and modern Pillow IFDRational)
-                    try:
-                        return float(val)
-                    except:
-                        pass
-                    
-                    # 2. Fallback for older Pillow where IFDRational was a raw tuple (num, den)
-                    if isinstance(val, (tuple, list)):
-                        if len(val) == 1:
-                            try: return float(val)
-                            except: return 0.0
-                        if len(val) >= 2:
-                            try: return float(val) / float(val) if float(val) != 0 else 0.0
-                            except: return 0.0
-                            
-                    return 0.0
-
-                def to_decimal(dms, ref):
-                    if not dms or not ref: return 0.0
-                    try:
-                        deg = safe_float(dms) if len(dms) > 0 else 0.0
-                        minute = safe_float(dms) if len(dms) > 1 else 0.0
-                        sec = safe_float(dms) if len(dms) > 2 else 0.0
-                        
-                        decimal = deg + (minute / 60.0) + (sec / 3600.0)
-                        
-                        ref_str = str(ref).strip().upper()
-                        if 'S' in ref_str or 'W' in ref_str:
-                            decimal = -decimal
-                        return decimal
-                    except Exception as math_e:
-                        logger.warning(f"[MATH ERROR] GPS DMS format {dms}: {math_e}")
-                        return 0.0
-                        
-                lat = to_decimal(gps_info.get(2), gps_info.get(1))
-                lon = to_decimal(gps_info.get(4), gps_info.get(3))
-                
-                if lat != 0.0 and lon != 0.0:
-                    telemetry["lat"] = lat
-                    telemetry["lon"] = lon
-                    
-                alt = gps_info.get(6)
-                if alt is not None:
-                    telemetry["alt"] = safe_float(alt)
-            else:
-                logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
-                
-    except Exception as e:
-        logger.warning(f"[FATAL EXIF CRASH] Failed to extract GPS for {image_path}: {e}")
-        
-    return telemetry
-
 class Supervisor:
     def __init__(self, raw_image_dir, output_dir, weights_path=None, total_images=0, processed_counter=None, config=None):
         self.raw_image_dir = raw_image_dir
@@ -106,59 +27,22 @@ class Supervisor:
         self.total_images = total_images
         self.processed_counter = processed_counter
         self.config = config
-        
+
         self.raw_image_queue = mp.Queue()
-        self.tile_queue = mp.Queue(maxsize=2000) 
+        self.tile_queue = mp.Queue(maxsize=100) 
         self.candidate_queue = mp.Queue()
         self.verified_queue = mp.Queue() 
         
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def worker_node(self, worker_id, in_queue, tile_queue, counter, total):
-        logger.debug(f"Worker {worker_id} spun up and waiting for operations.")
-        
-        while True:
-            task_path = in_queue.get()
-            
-            if task_path == "SHUTDOWN_COMMAND":
-                logger.debug(f"Worker {worker_id} executing shutdown command.")
+    async def _async_launch(self):
+        targets = []
+        while not self.raw_image_queue.empty():
+            path = self.raw_image_queue.get()
+            if path == "SHUTDOWN_COMMAND":
                 break
-            
-            filename = os.path.basename(task_path)
-            
-            # --- THE FIX: Extract live telemetry before OpenCV ---
-            live_telemetry = extract_dji_telemetry(task_path)
-            
-            img = cv2.imread(task_path)
-            if img is not None:
-                height, width, _ = img.shape
-                
-                tile_size = self.config["slicer"]["tile_size"] if self.config else 224
-                overlap = self.config["slicer"]["overlap"] if self.config else 0.2
-                stride = int(tile_size * (1.0 - overlap))
-                
-                for y in range(0, height - tile_size + 1, stride):
-                    for x in range(0, width - tile_size + 1, stride):
-                        tile = img[y:y+tile_size, x:x+tile_size]
-                        
-                        payload = {
-                            "parent_image": filename,
-                            "offset_x": x,
-                            "offset_y": y,
-                            "tile_data": tile,
-                            "telemetry": live_telemetry  # Pass the live data
-                        }
-                        tile_queue.put(payload)
-            
-            if counter is not None:
-                with counter.get_lock():
-                    counter.value += 1
-                    current_n = counter.value
-                logger.info(f"[{current_n} out of {total}] Finished evaluating {filename}")
-            else:
-                logger.info(f"Finished evaluating {filename}")
+            targets.append(path)
 
-    def launch(self):
         num_cores = mp.cpu_count()
         
         logger.info("Spawning Cartographer process...")
@@ -182,26 +66,41 @@ class Supervisor:
         )
         inquisitor_process.start()
         
-        logger.info(f"Supervisor is launching the CPU Slicer swarm across {num_cores} cores...")
-        workers = []
-        for i in range(num_cores):
-            p = mp.Process(
-                target=self.worker_node, 
-                args=(i, self.raw_image_queue, self.tile_queue, self.processed_counter, self.total_images)
-            )
-            workers.append(p)
-            p.start()
-            
-        for p in workers:
-            p.join()
-            
+        logger.info(f"Supervisor is launching the CPU Slicer swarm via Pool across {num_cores} cores...")
+        
+        tile_size = self.config["slicer"]["tile_size"] if self.config else 224
+        overlap = self.config["slicer"]["overlap"] if self.config else 0.2
+        
+        worker_args = [(img, tile_size, overlap) for img in targets]
+        loop = asyncio.get_running_loop()
+        
+        with mp.Pool(processes=num_cores, initializer=init_worker, initargs=(self.tile_queue,)) as pool:
+            def consume_pool():
+                for _ in pool.imap_unordered(pool_slicer_worker, worker_args):
+                    if self.processed_counter is not None:
+                        with self.processed_counter.get_lock():
+                            self.processed_counter.value += 1
+                            current_n = self.processed_counter.value
+                        logger.info(f"[{current_n} out of {self.total_images}] Finished evaluating image.")
+                    else:
+                        logger.info(f"Finished evaluating image.")
+
+            await loop.run_in_executor(None, consume_pool)
+                
         self.tile_queue.put("SHUTDOWN_COMMAND")
-        inquisitor_process.join()
+        
+        logger.info("Waiting for Inquisitor to finish...")
+        await loop.run_in_executor(None, inquisitor_process.join)
         
         self.candidate_queue.put("SHUTDOWN_COMMAND")
-        skeptic_process.join()
+        logger.info("Waiting for Skeptic to finish...")
+        await loop.run_in_executor(None, skeptic_process.join)
         
         self.verified_queue.put("SHUTDOWN_COMMAND")
-        cartographer_process.join()
+        logger.info("Waiting for Cartographer to finish...")
+        await loop.run_in_executor(None, cartographer_process.join)
             
         logger.info("Swarm execution complete. Pipeline shutdown successful.")
+
+    def launch(self):
+        asyncio.run(self._async_launch())

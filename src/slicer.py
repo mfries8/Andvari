@@ -8,54 +8,111 @@ from queue import Empty
 logger = logging.getLogger("Andvari.Slicer")
 
 class TelemetryParser:
-    """Base class for extracting metadata. To be expanded later."""
+    """Extracts metadata from image files."""
     def extract(self, image_path):
-        return {"lat": 0.0, "lon": 0.0, "alt": 50.0, "pitch": -90.0, "heading": 0.0}
+        telemetry = {"lat": 0.0, "lon": 0.0, "alt": 50.0, "pitch": -90.0, "heading": 0.0}
+        try:
+            from PIL import Image, ExifTags
+            with Image.open(image_path) as img:
+                gps_info = None
+                if hasattr(img, "getexif"):
+                    exif = img.getexif()
+                    if hasattr(exif, "get_ifd"):
+                        gps_info = exif.get_ifd(0x8825)
+                
+                if not gps_info and hasattr(img, '_getexif'):
+                    raw_exif = img._getexif()
+                    if raw_exif:
+                        for k, v in raw_exif.items():
+                            if ExifTags.TAGS.get(k) == 'GPSInfo':
+                                gps_info = v
+                                break
+                                
+                if gps_info:
+                    def safe_float(val):
+                        try: return float(val)
+                        except: pass
+                        if isinstance(val, (tuple, list)):
+                            if len(val) == 1:
+                                try: return float(val[0])
+                                except: return 0.0
+                            if len(val) >= 2:
+                                try: return float(val[0]) / float(val[1]) if float(val[1]) != 0 else 0.0
+                                except: return 0.0
+                        return 0.0
 
-def slicer_worker(raw_queue, tile_queue, tile_size=224, overlap=0.2):
+                    def to_decimal(dms, ref):
+                        if not dms or not ref: return 0.0
+                        try:
+                            deg = safe_float(dms[0]) if len(dms) > 0 else 0.0
+                            minute = safe_float(dms[1]) if len(dms) > 1 else 0.0
+                            sec = safe_float(dms[2]) if len(dms) > 2 else 0.0
+                            
+                            decimal = deg + (minute / 60.0) + (sec / 3600.0)
+                            
+                            ref_str = str(ref).strip().upper()
+                            if 'S' in ref_str or 'W' in ref_str:
+                                decimal = -decimal
+                            return decimal
+                        except Exception as math_e:
+                            logger.warning(f"[MATH ERROR] GPS DMS format {dms}: {math_e}")
+                            return 0.0
+                            
+                    lat = to_decimal(gps_info.get(2), gps_info.get(1))
+                    lon = to_decimal(gps_info.get(4), gps_info.get(3))
+                    
+                    if lat != 0.0 and lon != 0.0:
+                        telemetry["lat"] = lat
+                        telemetry["lon"] = lon
+                        
+                    alt = gps_info.get(6)
+                    if alt is not None:
+                        telemetry["alt"] = safe_float(alt)
+                else:
+                    logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
+        except Exception as e:
+            logger.warning(f"[FATAL EXIF CRASH] Failed to extract GPS for {image_path}: {e}")
+        return telemetry
+
+_tile_queue = None
+
+def init_worker(q):
+    global _tile_queue
+    _tile_queue = q
+
+def pool_slicer_worker(args):
     """
-    The inference worker process. Pulls raw images from the queue, 
-    chops them into tiles, and feeds the GPU queue.
+    The inference worker mapped over the Pool.
+    Chops one image into tiles and feeds the GPU queue.
     """
-    logger.info("Slicer Agent online. Waiting for raw images...")
+    image_path, tile_size, overlap = args
     parser = TelemetryParser()
+    telemetry = parser.extract(image_path)
+    
+    img = cv2.imread(image_path)
+    if img is None:
+        logger.error(f"Failed to load {image_path}. Corrupted file?")
+        return 0
+        
+    height, width, _ = img.shape
     stride = int(tile_size * (1.0 - overlap))
     
-    while True:
-        try:
-            image_path = raw_queue.get(timeout=3)
-        except Empty:
-            continue
+    tile_count = 0
+    for y in range(0, height - tile_size + 1, stride):
+        for x in range(0, width - tile_size + 1, stride):
+            tile = img[y:y+tile_size, x:x+tile_size]
+            payload = {
+                "parent_image": os.path.basename(image_path),
+                "tile_data": tile,           
+                "offset_x": x,               
+                "offset_y": y,               
+                "telemetry": telemetry       
+            }
+            if _tile_queue is not None:
+                _tile_queue.put(payload)
+            tile_count += 1
             
-        if image_path == "POISON_PILL":
-            logger.info("Slicer received poison pill. Shutting down.")
-            break
-            
-        # 1. Extract Telemetry
-        telemetry = parser.extract(image_path)
-        
-        # 2. Load Image
-        img = cv2.imread(image_path)
-        if img is None:
-            logger.error(f"Failed to load {image_path}. Corrupted file?")
-            continue
-            
-        height, width, _ = img.shape
-        
-        # 3. Chop into tiles
-        tile_count = 0
-        for y in range(0, height - tile_size + 1, stride):
-            for x in range(0, width - tile_size + 1, stride):
-                tile = img[y:y+tile_size, x:x+tile_size]
-                payload = {
-                    "parent_image": os.path.basename(image_path),
-                    "tile_data": tile,           
-                    "offset_x": x,               
-                    "offset_y": y,               
-                    "telemetry": telemetry       
-                }
-                tile_queue.put(payload)
-                tile_count += 1
+    return tile_count
 
 def generate_training_data(input_dir, output_dir, tile_size=224):
     """
@@ -67,18 +124,22 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
     os.makedirs(pos_out, exist_ok=True)
     os.makedirs(neg_out, exist_ok=True)
 
-    pos_in = os.path.join(input_dir, "positive_raw")
-    neg_in = os.path.join(input_dir, "negative_raw")
+    pos_in = os.path.join(input_dir, "positive")
+    neg_in = os.path.join(input_dir, "negative")
 
     # ==========================================
     # PHASE 1: Targeted Annotation (UI)
     # ==========================================
     if os.path.exists(pos_in):
-        logger.info("Found positive_raw folder. Launching UI for targeted annotation.")
+        logger.info("Found positive folder. Launching UI for targeted annotation.")
         pos_images = glob.glob(os.path.join(pos_in, "*.[jJ][pP][gG]"))
     else:
-        logger.warning("No positive_raw folder found. Defaulting to all images in input directory.")
+        logger.warning("No positive folder found. Defaulting to all images in input directory.")
         pos_images = glob.glob(os.path.join(input_dir, "*.[jJ][pP][gG]"))
+
+    if not pos_images and not os.path.exists(neg_in):
+        logger.error(f"No valid .jpg images found in {input_dir} to process. Ending early.")
+        return
 
     if pos_images:
         total_pos = len(pos_images)
@@ -140,7 +201,7 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
     # PHASE 2: Silent Auto-Mining (No UI)
     # ==========================================
     if os.path.exists(neg_in):
-        logger.info("Found negative_raw folder. Silently mining background noise...")
+        logger.info("Found negative folder. Silently mining background noise...")
         neg_images = glob.glob(os.path.join(neg_in, "*.[jJ][pP][gG]"))
         
         for img_path in neg_images:
