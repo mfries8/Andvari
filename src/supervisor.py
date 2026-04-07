@@ -31,7 +31,6 @@ def extract_dji_telemetry(image_path):
         
         with Image.open(image_path) as img:
             gps_info = None
-            
             if hasattr(img, "getexif"):
                 exif = img.getexif()
                 if hasattr(exif, "get_ifd"):
@@ -46,37 +45,30 @@ def extract_dji_telemetry(image_path):
                             break
                             
             if gps_info:
-                def force_decimal(val):
-                    if val is None: return 0.0
-                    # [CRITICAL ESCAPE HATCH] Stop recursion if it's already a number
-                    if isinstance(val, (int, float)): return float(val)
-                    
-                    if hasattr(val, 'numerator') and hasattr(val, 'denominator'):
-                        n = force_decimal(val.numerator)
-                        d = force_decimal(val.denominator)
-                        return n / d if d != 0 else 0.0
-                        
-                    if isinstance(val, (tuple, list)):
-                        if len(val) == 0: return 0.0
-                        if len(val) == 1: return force_decimal(val)
-                        n = force_decimal(val)
-                        d = force_decimal(val)
-                        return n / d if d != 0 else 0.0
-                        
+                def safe_float(val):
+                    # 1. Native conversion (handles ints, floats, and modern Pillow IFDRational)
                     try:
                         return float(val)
                     except:
-                        return 0.0
+                        pass
+                    
+                    # 2. Fallback for older Pillow where IFDRational was a raw tuple (num, den)
+                    if isinstance(val, (tuple, list)):
+                        if len(val) == 1:
+                            try: return float(val)
+                            except: return 0.0
+                        if len(val) >= 2:
+                            try: return float(val) / float(val) if float(val) != 0 else 0.0
+                            except: return 0.0
+                            
+                    return 0.0
 
                 def to_decimal(dms, ref):
                     if not dms or not ref: return 0.0
                     try:
-                        if not isinstance(dms, (tuple, list)):
-                            return force_decimal(dms)
-                            
-                        deg = force_decimal(dms) if len(dms) > 0 else 0.0
-                        minute = force_decimal(dms) if len(dms) > 1 else 0.0
-                        sec = force_decimal(dms) if len(dms) > 2 else 0.0
+                        deg = safe_float(dms) if len(dms) > 0 else 0.0
+                        minute = safe_float(dms) if len(dms) > 1 else 0.0
+                        sec = safe_float(dms) if len(dms) > 2 else 0.0
                         
                         decimal = deg + (minute / 60.0) + (sec / 3600.0)
                         
@@ -97,7 +89,7 @@ def extract_dji_telemetry(image_path):
                     
                 alt = gps_info.get(6)
                 if alt is not None:
-                    telemetry["alt"] = force_decimal(alt)
+                    telemetry["alt"] = safe_float(alt)
             else:
                 logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
                 
