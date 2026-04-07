@@ -215,12 +215,35 @@ def main():
         if not os.path.exists(args.input):
             logger.error(f"Input directory not found: {args.input}")
             sys.exit(1)
-        swarm = Supervisor(raw_image_dir=args.input, output_dir=args.output)
-        for filename in os.listdir(args.input):
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff')):
-                swarm.raw_image_queue.put(os.path.join(args.input, filename))
+            
+        # 1. Gather all valid images and calculate [N]
+        valid_exts = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+        image_files = [f for f in os.listdir(args.input) if f.lower().endswith(valid_exts)]
+        total_images = len(image_files)
+        
+        if total_images == 0:
+            logger.error(f"No valid images found in {args.input}")
+            sys.exit(1)
+            
+        # 2. Create the multiprocessing-safe [n] counter
+        processed_counter = mp.Value('i', 0)
+        
+        logger.info(f"Initializing Andvari Pipeline. Target: {args.input} ({total_images} total images)")
+        
+        # 3. Pass both tracking variables down into the swarm
+        swarm = Supervisor(
+            raw_image_dir=args.input, 
+            output_dir=args.output,
+            total_images=total_images,
+            processed_counter=processed_counter
+        )
+        
+        for filename in image_files:
+            swarm.raw_image_queue.put(os.path.join(args.input, filename))
+            
         for _ in range(mp.cpu_count()):
             swarm.raw_image_queue.put("POISON_PILL")
+            
         swarm.launch()
         
     elif args.mode == "train":
