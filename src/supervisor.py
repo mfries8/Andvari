@@ -24,17 +24,19 @@ def extract_dji_telemetry(image_path):
     telemetry = {"lat": 0.0, "lon": 0.0, "alt": 50.0, "heading": 0.0, "pitch": -90.0}
     try:
         import os
+        import logging
         from PIL import Image, ExifTags
+        
+        logger = logging.getLogger("Andvari.Supervisor")
+        
         with Image.open(image_path) as img:
             gps_info = None
             
-            # Try modern Pillow (>= 8.2.0)
             if hasattr(img, "getexif"):
                 exif = img.getexif()
                 if hasattr(exif, "get_ifd"):
                     gps_info = exif.get_ifd(0x8825)
             
-            # Fallback for older Pillow
             if not gps_info and hasattr(img, '_getexif'):
                 raw_exif = img._getexif()
                 if raw_exif:
@@ -45,25 +47,22 @@ def extract_dji_telemetry(image_path):
                             
             if gps_info:
                 def force_decimal(val):
-                    # The ultimate recursive unwrapper
                     if val is None: return 0.0
+                    # [CRITICAL ESCAPE HATCH] Stop recursion if it's already a number
+                    if isinstance(val, (int, float)): return float(val)
                     
-                    # Handle Pillow IFDRational objects
                     if hasattr(val, 'numerator') and hasattr(val, 'denominator'):
                         n = force_decimal(val.numerator)
                         d = force_decimal(val.denominator)
                         return n / d if d != 0 else 0.0
                         
-                    # Handle raw nested tuples/lists
                     if isinstance(val, (tuple, list)):
                         if len(val) == 0: return 0.0
                         if len(val) == 1: return force_decimal(val)
-                        # If len >= 2, assume it's a (numerator, denominator) fraction
                         n = force_decimal(val)
                         d = force_decimal(val)
                         return n / d if d != 0 else 0.0
                         
-                    # We hit the actual number
                     try:
                         return float(val)
                     except:
@@ -72,7 +71,6 @@ def extract_dji_telemetry(image_path):
                 def to_decimal(dms, ref):
                     if not dms or not ref: return 0.0
                     try:
-                        # Standard Decimal Degrees fallback
                         if not isinstance(dms, (tuple, list)):
                             return force_decimal(dms)
                             
@@ -82,13 +80,12 @@ def extract_dji_telemetry(image_path):
                         
                         decimal = deg + (minute / 60.0) + (sec / 3600.0)
                         
-                        # Check for South/West to make it negative (handles byte strings or tuples safely)
                         ref_str = str(ref).strip().upper()
                         if 'S' in ref_str or 'W' in ref_str:
                             decimal = -decimal
                         return decimal
                     except Exception as math_e:
-                        logger.warning(f"Math error on GPS DMS format {dms}: {math_e}")
+                        logger.warning(f"[MATH ERROR] GPS DMS format {dms}: {math_e}")
                         return 0.0
                         
                 lat = to_decimal(gps_info.get(2), gps_info.get(1))
@@ -105,7 +102,7 @@ def extract_dji_telemetry(image_path):
                 logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
                 
     except Exception as e:
-        logger.warning(f"[FATAL EXIF CRASH] Failed to extract GPS for {os.path.basename(image_path)}: {e}")
+        logger.warning(f"[FATAL EXIF CRASH] Failed to extract GPS for {image_path}: {e}")
         
     return telemetry
 
