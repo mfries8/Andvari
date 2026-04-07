@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torchvision.models as models
 import cv2
 import numpy as np
 import logging
@@ -7,78 +8,6 @@ from queue import Empty
 import time
 
 logger = logging.getLogger("Andvari.Inquisitor")
-
-class MeteoriteCNN(nn.Module):
-    """
-    The Convolutional Neural Network architecture defined in the requirements.
-    Expects a 512x512 RGB input tile.
-    """
-    def __init__(self):
-        super(MeteoriteCNN, self).__init__()
-        
-        # Block 1: 512x512 -> 256x256
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(3, 30, kernel_size=3, padding=1),
-            nn.BatchNorm2d(30),
-            nn.ReLU(),
-            nn.MaxPool2d(2)
-        )
-        
-        # Block 2: 256x256 -> 128x128
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(30, 60, kernel_size=3, padding=1),
-            nn.BatchNorm2d(60),
-            nn.ReLU(),
-            nn.MaxPool2d(2)
-        )
-        
-        # Block 3: 128x128 -> 64x64
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(60, 120, kernel_size=3, padding=1),
-            nn.BatchNorm2d(120),
-            nn.ReLU(),
-            nn.MaxPool2d(2)
-        )
-        
-        # Block 4: 64x64 -> 32x32
-        self.conv4 = nn.Sequential(
-            nn.Conv2d(120, 240, kernel_size=3, padding=1),
-            nn.BatchNorm2d(240),
-            nn.ReLU(),
-            nn.MaxPool2d(2)
-        )
-        
-        self.flatten = nn.Flatten()
-        
-        # Fully Connected Layers
-        # 32 * 32 * 240 = 245,760 input features
-        self.fc1 = nn.Sequential(
-            nn.Linear(245760, 1000),
-            nn.ReLU(),
-            nn.Dropout(0.5)
-        )
-        
-        self.fc2 = nn.Sequential(
-            nn.Linear(1000, 150),
-            nn.ReLU(),
-            nn.Dropout(0.5)
-        )
-        
-        self.output = nn.Sequential(
-            nn.Linear(150, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.flatten(x)
-        x = self.fc1(x)
-        x = self.fc2(x)
-        x = self.output(x)
-        return x
 
 def inquisitor_worker(tile_queue, candidate_queue, weights_path=None, batch_size=32, threshold=0.85):
     """
@@ -92,7 +21,12 @@ def inquisitor_worker(tile_queue, candidate_queue, weights_path=None, batch_size
     if device.type == "cpu":
         logger.warning("CUDA unavailable! Inference will run on CPU. Bring a sleeping bag.")
         
-    model = MeteoriteCNN().to(device)
+    # --- NEW MODEL INSTANTIATION (ResNet18) ---
+    model = models.resnet18(weights=None)
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, 2)  # 2 outputs: [Dirt, Meteorite]
+    model = model.to(device)
+    # ------------------------------------------
     
     if weights_path:
         model.load_state_dict(torch.load(weights_path))
@@ -138,9 +72,15 @@ def inquisitor_worker(tile_queue, candidate_queue, weights_path=None, batch_size
         # Stack the individual tensors into a single massive batched tensor block
         batch_stack = torch.stack(batch_tensors).to(device)
         
+        # --- NEW INFERENCE LOGIC ---
         # Run the inference without tracking gradients to save VRAM and speed things up
         with torch.no_grad():
-            predictions = model(batch_stack).squeeze(1) # Flatten the output array
+            logits = model(batch_stack)
+            # Convert raw logits to probabilities (0.0 to 1.0)
+            probabilities = torch.nn.functional.softmax(logits, dim=1)
+            # Extract the probability for Class 1 (Meteorite)
+            predictions = probabilities[:, 1] 
+        # ---------------------------
             
         # Send successful candidates to the Skeptic Agent
         for i, conf_score in enumerate(predictions.cpu().numpy()):
