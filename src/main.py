@@ -29,7 +29,7 @@ def setup_logging():
 
 logger = setup_logging()
 
-def interactive_annotator(image_path):
+def interactive_annotator(image_path, current_idx, total_images):
     """
     Opens an OpenCV GUI to let the user click on meteorites.
     Returns a list of (x, y) coordinates mapped to the original image scale.
@@ -63,7 +63,8 @@ def interactive_annotator(image_path):
     cv2.namedWindow("Andvari Annotator")
     cv2.setMouseCallback("Andvari Annotator", mouse_callback)
 
-    logger.info(f"Annotating: {os.path.basename(image_path)}. Click targets. Press 'N' or 'Space' for Next.")
+    # --- THE PROGRESS TRACKER ---
+    logger.info(f"[{current_idx} out of {total_images}] Annotating: {os.path.basename(image_path)}. Click targets. Press 'N' or 'Space' for Next.")
     
     while True:
         cv2.imshow("Andvari Annotator", ui_canvas)
@@ -142,16 +143,18 @@ def standalone_slice(input_dir, output_dir, tile_size=512, overlap=0.2, annotate
         logger.error(f"No valid images found in {input_dir}")
         return
 
+    total_images = len(image_paths)
+
     # PHASE 1: Synchronous Annotation
     target_map = {} # Maps filename -> [(x1,y1), (x2,y2)]
     if annotate_mode:
-        for img_path in image_paths:
-            clicks = interactive_annotator(img_path)
+        for idx, img_path in enumerate(image_paths, start=1):
+            clicks = interactive_annotator(img_path, current_idx=idx, total_images=total_images)
             target_map[img_path] = clicks
-        logger.info(f"Annotation complete. Captured targets across {len(image_paths)} images.")
+        logger.info(f"Annotation complete. Captured targets across {total_images} images.")
 
     # PHASE 2: Asynchronous Slicing
-    logger.info(f"Slicing {len(image_paths)} images across {mp.cpu_count()} CPU cores...")
+    logger.info(f"Slicing {total_images} images across {mp.cpu_count()} CPU cores...")
     
     task_args = []
     for img_path in image_paths:
@@ -216,7 +219,6 @@ def main():
             logger.error(f"Input directory not found: {args.input}")
             sys.exit(1)
             
-        # 1. Gather all valid images and calculate [N]
         valid_exts = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
         image_files = [f for f in os.listdir(args.input) if f.lower().endswith(valid_exts)]
         total_images = len(image_files)
@@ -225,12 +227,9 @@ def main():
             logger.error(f"No valid images found in {args.input}")
             sys.exit(1)
             
-        # 2. Create the multiprocessing-safe [n] counter
         processed_counter = mp.Value('i', 0)
-        
         logger.info(f"Initializing Andvari Pipeline. Target: {args.input} ({total_images} total images)")
         
-        # 3. Pass both tracking variables down into the swarm
         swarm = Supervisor(
             raw_image_dir=args.input, 
             output_dir=args.output,
