@@ -233,6 +233,7 @@ def main():
         swarm = Supervisor(
             raw_image_dir=args.input, 
             output_dir=args.output,
+            weights_path=args.weights,
             total_images=total_images,
             processed_counter=processed_counter
         )
