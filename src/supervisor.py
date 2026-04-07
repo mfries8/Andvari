@@ -24,33 +24,57 @@ def extract_dji_telemetry(image_path):
     telemetry = {"lat": 0.0, "lon": 0.0, "alt": 50.0, "heading": 0.0, "pitch": -90.0}
     try:
         with Image.open(image_path) as img:
-            exif = img._getexif()
-            if not exif:
-                return telemetry
-            
             gps_info = None
-            for key, val in exif.items():
-                if ExifTags.TAGS.get(key) == 'GPSInfo':
-                    gps_info = val
-                    break
-                    
+            
+            # Try modern Pillow (>= 8.2.0)
+            if hasattr(img, "getexif"):
+                exif = img.getexif()
+                if hasattr(exif, "get_ifd"):
+                    gps_info = exif.get_ifd(0x8825) # 0x8825 is the GPSInfo block
+            
+            # Fallback for older Pillow
+            if not gps_info and hasattr(img, '_getexif'):
+                raw_exif = img._getexif()
+                if raw_exif:
+                    for k, v in raw_exif.items():
+                        if ExifTags.TAGS.get(k) == 'GPSInfo':
+                            gps_info = v
+                            break
+                            
             if gps_info:
-                # PIL GPS tags: 1:LatRef, 2:Lat, 3:LonRef, 4:Lon, 6:Alt
                 def to_decimal(dms, ref):
-                    deg = float(dms)
-                    min = float(dms)
-                    sec = float(dms)
-                    decimal = deg + (min / 60.0) + (sec / 3600.0)
-                    return -decimal if ref in ['S', 'W'] else decimal
+                    if not dms or not ref: return 0.0
+                    try:
+                        # DJI sometimes embeds tuples of IFDRationals. 
+                        # float() forces them into standard decimals.
+                        deg = float(dms)
+                        minute = float(dms)
+                        sec = float(dms)
+                        decimal = deg + (minute / 60.0) + (sec / 3600.0)
+                        return -decimal if ref in ['S', 'W'] else decimal
+                    except Exception as math_e:
+                        logger.warning(f"Math error on GPS DMS format {dms}: {math_e}")
+                        return 0.0
+                        
+                lat = to_decimal(gps_info.get(2), gps_info.get(1))
+                lon = to_decimal(gps_info.get(4), gps_info.get(3))
+                
+                if lat != 0.0 and lon != 0.0:
+                    telemetry["lat"] = lat
+                    telemetry["lon"] = lon
                     
-                if 2 in gps_info and 1 in gps_info:
-                    telemetry["lat"] = to_decimal(gps_info, gps_info)
-                if 4 in gps_info and 3 in gps_info:
-                    telemetry["lon"] = to_decimal(gps_info, gps_info)
-                if 6 in gps_info:
-                    telemetry["alt"] = float(gps_info)
+                alt = gps_info.get(6)
+                if alt is not None:
+                    try:
+                        telemetry["alt"] = float(alt)
+                    except:
+                        pass
+            else:
+                logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
+                
     except Exception as e:
-        logger.debug(f"Failed to parse EXIF for {os.path.basename(image_path)}: {e}")
+        # Elevated to WARNING so it prints to the console if it crashes
+        logger.warning(f"[FATAL EXIF CRASH] Failed to extract GPS for {os.path.basename(image_path)}: {e}")
         
     return telemetry
 
