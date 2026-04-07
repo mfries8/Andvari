@@ -4,30 +4,25 @@ import math
 import cv2
 import logging
 from queue import Empty
+import traceback
+import numpy as np
 
 logger = logging.getLogger("Andvari.Cartographer")
 
-# Earth radius in meters
 R_EARTH = 6378137.0 
 
 class CartographerConfig:
-    """Hardware specs for the camera to calculate pixel-to-meter scale."""
     def __init__(self, fov_horizontal_deg=77.0, image_width_px=8192, image_height_px=5460):
         self.fov_h = math.radians(fov_horizontal_deg)
         self.width = image_width_px
         self.height = image_height_px
 
 def generate_kml(csv_path, kml_path):
-    """Wraps the CSV data into a basic KML file for secondary drone vectoring."""
-    kml_header = """<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <Document>
-    <name>Andvari Verified Candidates</name>\n"""
+    kml_header = """<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>Andvari Verified Candidates</name>\n"""
     kml_footer = """  </Document>\n</kml>"""
     
     with open(kml_path, 'w') as kml_file:
         kml_file.write(kml_header)
-        
         if os.path.exists(csv_path):
             with open(csv_path, 'r') as f:
                 reader = csv.DictReader(f)
@@ -40,93 +35,91 @@ def generate_kml(csv_path, kml_path):
       </Point>
     </Placemark>\n"""
                     kml_file.write(placemark)
-                
         kml_file.write(kml_footer)
 
 def cartographer_worker(verified_queue, output_dir, config=CartographerConfig()):
-    """
-    The CPU worker process. Takes verified hits, translates pixel coordinates
-    to Lat/Long, saves thumbnails, and updates the GIS exports.
-    """
-    logger.info("Cartographer Agent online. Mapping the treasure.")
-    
-    os.makedirs(output_dir, exist_ok=True)
-    csv_path = os.path.join(output_dir, "verified_candidates.csv")
-    kml_path = os.path.join(output_dir, "verified_candidates.kml")
-    thumb_dir = os.path.join(output_dir, "thumbnails")
-    os.makedirs(thumb_dir, exist_ok=True)
-    
-    # Initialize CSV header if it doesn't exist
-    if not os.path.exists(csv_path):
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["ID", "Latitude", "Longitude", "Confidence", "Parent_Image", "Thumbnail"])
+    try:
+        logger.info("Cartographer Agent online. Mapping the treasure.")
+        os.makedirs(output_dir, exist_ok=True)
+        csv_path = os.path.join(output_dir, "verified_candidates.csv")
+        kml_path = os.path.join(output_dir, "verified_candidates.kml")
+        thumb_dir = os.path.join(output_dir, "thumbnails")
+        os.makedirs(thumb_dir, exist_ok=True)
+        
+        if not os.path.exists(csv_path):
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["ID", "Latitude", "Longitude", "Confidence", "Parent_Image", "Thumbnail"])
+                
+        candidate_id = 1
+        
+        while True:
+            try:
+                payload = verified_queue.get(timeout=3)
+            except Empty:
+                continue
+                
+            if payload == "POISON_PILL":
+                logger.info("Cartographer received poison pill. Finalizing KML and shutting down.")
+                generate_kml(csv_path, kml_path)
+                break
+                
+            telemetry = payload.get("telemetry")
+            drone_lat = telemetry.get("lat")
+            drone_lon = telemetry.get("lon")
+            drone_alt = telemetry.get("alt")
+            drone_heading = math.radians(telemetry.get("heading", 0.0))
             
-    candidate_id = 1
-    
-    while True:
-        try:
-            payload = verified_queue.get(timeout=3)
-        except Empty:
-            continue
+            ground_width_m = 2.0 * drone_alt * math.tan(config.fov_h / 2.0)
+            gsd = ground_width_m / config.width
             
-        if payload == "POISON_PILL":
-            logger.info("Cartographer received poison pill. Finalizing KML and shutting down.")
-            generate_kml(csv_path, kml_path)
-            break
+            tile_shape = payload.get("tile_data").shape 
+            tile_height = tile_shape
+            tile_width = tile_shape
             
-        telemetry = payload.get("telemetry")
-        drone_lat = telemetry.get("lat")
-        drone_lon = telemetry.get("lon")
-        drone_alt = telemetry.get("alt")
-        drone_heading = math.radians(telemetry.get("heading", 0.0))
-        
-        ground_width_m = 2.0 * drone_alt * math.tan(config.fov_h / 2.0)
-        gsd = ground_width_m / config.width
-        
-        # --- THE FIX: Extracting integers from the shape tuple ---
-        tile_shape = payload.get("tile_data").shape 
-        tile_height = tile_shape
-        tile_width = tile_shape
-        
-        hit_px_x = payload.get("offset_x") + (tile_width / 2.0)
-        hit_px_y = payload.get("offset_y") + (tile_height / 2.0)
-        # ---------------------------------------------------------
-        
-        center_x = config.width / 2.0
-        center_y = config.height / 2.0
-        
-        delta_px_x = hit_px_x - center_x
-        delta_px_y = center_y - hit_px_y 
-        
-        dx_m = delta_px_x * gsd
-        dy_m = delta_px_y * gsd
-        
-        dx_north = dx_m * math.cos(drone_heading) - dy_m * math.sin(drone_heading)
-        dy_north = dx_m * math.sin(drone_heading) + dy_m * math.cos(drone_heading)
-        
-        delta_lat = (dy_north / R_EARTH) * (180.0 / math.pi)
-        delta_lon = (dx_north / (R_EARTH * math.cos(math.pi * drone_lat / 180.0))) * (180.0 / math.pi)
-        
-        final_lat = drone_lat + delta_lat
-        final_lon = drone_lon + delta_lon
-        
-        parent_name = os.path.basename(payload.get("parent_image"))
-        thumb_name = f"candidate_{candidate_id:04d}_{parent_name}"
-        thumb_path = os.path.join(thumb_dir, thumb_name)
-        
-        cv2.imwrite(thumb_path, payload.get("tile_data"))
-        
-        with open(csv_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                candidate_id, 
-                f"{final_lat:.7f}", 
-                f"{final_lon:.7f}", 
-                f"{payload.get('confidence'):.3f}", 
-                parent_name, 
-                thumb_path
-            ])
+            hit_px_x = payload.get("offset_x") + (tile_width / 2.0)
+            hit_px_y = payload.get("offset_y") + (tile_height / 2.0)
             
-        logger.info(f"Mapped Candidate {candidate_id} -> Lat: {final_lat:.7f}, Lon: {final_lon:.7f}")
-        candidate_id += 1
+            center_x = config.width / 2.0
+            center_y = config.height / 2.0
+            
+            delta_px_x = hit_px_x - center_x
+            delta_px_y = center_y - hit_px_y 
+            
+            dx_m = delta_px_x * gsd
+            dy_m = delta_px_y * gsd
+            
+            dx_north = dx_m * math.cos(drone_heading) - dy_m * math.sin(drone_heading)
+            dy_north = dx_m * math.sin(drone_heading) + dy_m * math.cos(drone_heading)
+            
+            delta_lat = (dy_north / R_EARTH) * (180.0 / math.pi)
+            delta_lon = (dx_north / (R_EARTH * math.cos(math.pi * drone_lat / 180.0))) * (180.0 / math.pi)
+            
+            final_lat = drone_lat + delta_lat
+            final_lon = drone_lon + delta_lon
+            
+            parent_name = os.path.basename(payload.get("parent_image"))
+            thumb_name = f"candidate_{candidate_id:04d}_{parent_name}"
+            thumb_path = os.path.join(thumb_dir, thumb_name)
+            
+            # CRITICAL: Contiguous array enforcement for saving
+            safe_tile = np.ascontiguousarray(payload.get("tile_data"))
+            cv2.imwrite(thumb_path, safe_tile)
+            
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    candidate_id, 
+                    f"{final_lat:.7f}", 
+                    f"{final_lon:.7f}", 
+                    f"{payload.get('confidence'):.3f}", 
+                    parent_name, 
+                    thumb_path
+                ])
+                
+            logger.info(f"Mapped Candidate {candidate_id} -> Lat: {final_lat:.7f}, Lon: {final_lon:.7f}")
+            candidate_id += 1
+            
+    except Exception as e:
+        logger.error(f"[FATAL ERROR] Cartographer crashed: {e}")
+        logger.error(traceback.format_exc())
