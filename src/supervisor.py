@@ -23,6 +23,7 @@ def extract_dji_telemetry(image_path):
     """Intercepts the image to extract native DJI GPS data before OpenCV strips it."""
     telemetry = {"lat": 0.0, "lon": 0.0, "alt": 50.0, "heading": 0.0, "pitch": -90.0}
     try:
+        import os
         from PIL import Image, ExifTags
         with Image.open(image_path) as img:
             gps_info = None
@@ -43,25 +44,28 @@ def extract_dji_telemetry(image_path):
                             break
                             
             if gps_info:
+                def parse_val(val):
+                    # Recursively strip away single-item tuples (e.g., (29.0,) -> 29.0)
+                    while isinstance(val, (tuple, list)) and len(val) == 1:
+                        val = val
+                        
+                    # Handle Pillow IFDRational or standard (numerator, denominator) tuples
+                    if hasattr(val, 'numerator') and hasattr(val, 'denominator'):
+                        return float(val.numerator) / float(val.denominator) if float(val.denominator) != 0 else 0.0
+                    if isinstance(val, (tuple, list)) and len(val) >= 2:
+                        return float(val) / float(val) if float(val) != 0 else 0.0
+                        
+                    # Handle raw extracted numbers
+                    return float(val)
+
                 def to_decimal(dms, ref):
                     if not dms or not ref: return 0.0
                     try:
-                        def eval_frac(val):
-                            # Handle Pillow IFDRational objects
-                            if hasattr(val, 'numerator') and hasattr(val, 'denominator'):
-                                return float(val.numerator) / float(val.denominator) if val.denominator != 0 else 0.0
-                            # Handle raw (numerator, denominator) tuples
-                            if isinstance(val, tuple) and len(val) == 2:
-                                return float(val) / float(val) if val != 0 else 0.0
-                            # Handle standard numbers
-                            return float(val)
-                            
-                        deg = eval_frac(dms)
-                        minute = eval_frac(dms)
-                        sec = eval_frac(dms)
-                        
+                        deg = parse_val(dms)
+                        minute = parse_val(dms)
+                        sec = parse_val(dms)
                         decimal = deg + (minute / 60.0) + (sec / 3600.0)
-                        return -decimal if ref in ['S', 'W'] else decimal
+                        return -decimal if str(ref).strip().upper() in ['S', 'W'] else decimal
                     except Exception as math_e:
                         logger.warning(f"Math error on GPS DMS format {dms}: {math_e}")
                         return 0.0
@@ -76,13 +80,7 @@ def extract_dji_telemetry(image_path):
                 alt = gps_info.get(6)
                 if alt is not None:
                     try:
-                        # Extract alt if it is a fraction as well
-                        if hasattr(alt, 'numerator'):
-                            telemetry["alt"] = float(alt.numerator) / float(alt.denominator) if alt.denominator != 0 else 50.0
-                        elif isinstance(alt, tuple) and len(alt) == 2:
-                            telemetry["alt"] = float(alt) / float(alt) if alt != 0 else 50.0
-                        else:
-                            telemetry["alt"] = float(alt)
+                        telemetry["alt"] = parse_val(alt)
                     except:
                         pass
             else:
