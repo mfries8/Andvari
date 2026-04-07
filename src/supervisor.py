@@ -10,12 +10,11 @@ from inquisitor import inquisitor_worker
 
 def setup_logging():
     logger = logging.getLogger("Andvari.Supervisor")
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
+    # Strip any rogue handlers causing double prints
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
     return logger
 
 logger = setup_logging()
