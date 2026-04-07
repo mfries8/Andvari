@@ -25,18 +25,38 @@ Andvari utilizes an agentic framework to optimize hardware utilization, keeping 
 * A drone capable of flying grid searches at 1.5 - 2.0 mm/pixel GSD.
 
 ## Installation
-1. Clone the repository.
-2. Install the required dependencies (preferably in a fresh virtual environment):
 
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-    pip install -r requirements.txt
+### Dependency Installation & The CUDA Catch
+Install the required dependencies, preferably in a fresh virtual environment. 
 
-*(Note: Adjust the PyTorch CUDA index URL to match your specific hardware and drivers).*
+**1. Install PyTorch (Hardware Specific)**
+PyTorch requires a very specific installation command depending on your graphics card. **Do not blindly copy-paste this without checking your hardware.**
+
+```bash
+# Example for CUDA 11.8:
+pip install torch torchvision torchaudio --index-url [https://download.pytorch.org/whl/cu118](https://download.pytorch.org/whl/cu118)
+```
+
+To find *your* exact command:
+* Open your terminal or PowerShell and run `nvidia-smi`.
+* Look at the top right of the output box for **CUDA Version: XX.X**. This is the *maximum* version your current NVIDIA driver supports.
+* Go to the [PyTorch Local Installation Page](https://pytorch.org/get-started/locally/).
+* Select your OS, `Pip`, `Python`, and a Compute Platform (CUDA version) that is **equal to or lower than** the number you just found. Copy the generated command and run it.
+* *(Note: If you are running on a Mac, an Intel/AMD integrated chip, or a system without a dedicated NVIDIA GPU, select the "CPU" compute platform).*
+
+**2. Install Andvari Requirements**
+Once the correct version of PyTorch is successfully installed, install the remaining swarm dependencies:
+
+```bash
+pip install -r requirements.txt
+```
 
 ### The GPU Polygraph Test
 Before running any field data, you **must** ensure Python can see your graphics card. Running this pipeline on a standard CPU will take days instead of minutes. Activate your environment and run:
 
-    python -c "import torch; print('GPU Available:', torch.cuda.is_available()); print('Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```bash
+python -c "import torch; print('GPU Available:', torch.cuda.is_available()); print('Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
 
 If this returns `False` or `CPU`, reinstall the CUDA-enabled version of PyTorch. Do not proceed until this prints your GPU's name.
 
@@ -45,20 +65,22 @@ Before running any scripts, you must set up your data directories. **Crucial Rul
 
 Create a `data/` directory in the root of the project. Your raw drone dumps will go here, and the code will automatically generate the required subfolders during processing:
 
-    Andvari/
-    ├── models/
-    │   └── base.pth                     <-- Your lab-trained ResNet18 base weights
+```text
+Andvari/
+├── models/
+│   └── base.pth                     <-- Your lab-trained ResNet18 base weights
+│
+└── data/
+    ├── raw_calibration_1/           <-- Dump raw calibration flight images here
     │
-    └── data/
-        ├── raw_calibration_1/           <-- Dump raw calibration flight images here
-        │
-        ├── field_1_training/            <-- Pipeline auto-generates this directory
-        │   ├── positive/                <-- Slicer populates this based on your clicks
-        │   └── negative/                <-- Slicer populates this automatically
-        │
-        ├── raw_flight_1/                <-- Dump main search grid flight here
-        │
-        └── flight_1_results/            <-- Pipeline outputs land here
+    ├── field_1_training/            <-- Pipeline auto-generates this directory
+    │   ├── positive/                <-- Slicer populates this based on your clicks
+    │   └── negative/                <-- Slicer populates this automatically
+    │
+    ├── raw_flight_1/                <-- Dump main search grid flight here
+    │
+    └── flight_1_results/            <-- Pipeline outputs land here
+```
 
 ---
 
@@ -78,7 +100,9 @@ Before you can train the model on a new environment, you need to chop your calib
 2. Dump the raw images into your `./data/raw_calibration_1/` folder.
 3. Run the Slicer with the annotation and tile_size flags:
 
-    python src/main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/ --annotate --tile_size 224
+```bash
+python src/main.py slice --input ./data/raw_calibration_1/ --output ./data/field_1_training/ --annotate --tile_size 224
+```
 
 4. **The UI Workflow:** A window will pop up showing your first image. 
     * If you see a real proxy rock, click it (a green dot will appear). 
@@ -89,18 +113,24 @@ Before you can train the model on a new environment, you need to chop your calib
 ### Step 2: Field Fine-Tuning (`train`)
 Fine-tune your foundational `base.pth` weights to the local terrain using the 224x224 data you just annotated:
 
-    python src/main.py train --dataset ./data/field_1_training/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
+```bash
+python src/main.py train --dataset ./data/field_1_training/ --base_weights ./models/base.pth --output_weights ./models/field_1_tuned.pth --epochs 15
+```
 
 ### Step 3: The Main Search (`pipeline`)
 Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_flight_1` directory and unleash the swarm:
 
-    python src/main.py pipeline --input ./data/raw_flight_1/ --output ./data/flight_1_results/ --weights ./models/field_1_tuned.pth
+```bash
+python src/main.py pipeline --input ./data/raw_flight_1/ --output ./data/flight_1_results/ --weights ./models/field_1_tuned.pth
+```
 
 *Note: The Supervisor will output `[n out of N]` progress trackers to the console so you can monitor the GPU's pace.*
 
 ### Step 4: Human Verification (`review`)
 Once the pipeline finishes, review the surviving candidates before deploying field personnel on foot.
 
-    python src/main.py review
+```bash
+python src/main.py review
+```
 
 This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `.csv`.
