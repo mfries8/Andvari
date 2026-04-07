@@ -3,6 +3,7 @@ import sys
 import logging
 import multiprocessing as mp
 import cv2
+from PIL import Image, ExifTags
 
 from inquisitor import inquisitor_worker
 from skeptic import skeptic_worker
@@ -17,6 +18,41 @@ def setup_logging():
     return logger
 
 logger = setup_logging()
+
+def extract_dji_telemetry(image_path):
+    """Intercepts the image to extract native DJI GPS data before OpenCV strips it."""
+    telemetry = {"lat": 0.0, "lon": 0.0, "alt": 50.0, "heading": 0.0, "pitch": -90.0}
+    try:
+        with Image.open(image_path) as img:
+            exif = img._getexif()
+            if not exif:
+                return telemetry
+            
+            gps_info = None
+            for key, val in exif.items():
+                if ExifTags.TAGS.get(key) == 'GPSInfo':
+                    gps_info = val
+                    break
+                    
+            if gps_info:
+                # PIL GPS tags: 1:LatRef, 2:Lat, 3:LonRef, 4:Lon, 6:Alt
+                def to_decimal(dms, ref):
+                    deg = float(dms)
+                    min = float(dms)
+                    sec = float(dms)
+                    decimal = deg + (min / 60.0) + (sec / 3600.0)
+                    return -decimal if ref in ['S', 'W'] else decimal
+                    
+                if 2 in gps_info and 1 in gps_info:
+                    telemetry["lat"] = to_decimal(gps_info, gps_info)
+                if 4 in gps_info and 3 in gps_info:
+                    telemetry["lon"] = to_decimal(gps_info, gps_info)
+                if 6 in gps_info:
+                    telemetry["alt"] = float(gps_info)
+    except Exception as e:
+        logger.debug(f"Failed to parse EXIF for {os.path.basename(image_path)}: {e}")
+        
+    return telemetry
 
 class Supervisor:
     def __init__(self, raw_image_dir, output_dir, weights_path=None, total_images=0, processed_counter=None, config=None):
@@ -46,6 +82,9 @@ class Supervisor:
             
             filename = os.path.basename(task_path)
             
+            # --- THE FIX: Extract live telemetry before OpenCV ---
+            live_telemetry = extract_dji_telemetry(task_path)
+            
             img = cv2.imread(task_path)
             if img is not None:
                 height, width, _ = img.shape
@@ -53,14 +92,6 @@ class Supervisor:
                 tile_size = self.config["slicer"]["tile_size"] if self.config else 224
                 overlap = self.config["slicer"]["overlap"] if self.config else 0.2
                 stride = int(tile_size * (1.0 - overlap))
-                
-                telemetry = {
-                    "lat": self.config["flight_defaults"]["latitude"] if self.config else 0.0,
-                    "lon": self.config["flight_defaults"]["longitude"] if self.config else 0.0,
-                    "alt": self.config["flight_defaults"]["altitude_m"] if self.config else 50.0,
-                    "pitch": -90.0,
-                    "heading": self.config["flight_defaults"]["heading_deg"] if self.config else 0.0
-                }
                 
                 for y in range(0, height - tile_size + 1, stride):
                     for x in range(0, width - tile_size + 1, stride):
@@ -71,7 +102,7 @@ class Supervisor:
                             "offset_x": x,
                             "offset_y": y,
                             "tile_data": tile,
-                            "telemetry": telemetry
+                            "telemetry": live_telemetry  # Pass the live data
                         }
                         tile_queue.put(payload)
             
