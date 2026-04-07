@@ -9,7 +9,7 @@ import time
 
 logger = logging.getLogger("Andvari.Inquisitor")
 
-def inquisitor_worker(tile_queue, candidate_queue, weights_path=None, batch_size=32, threshold=0.85):
+def inquisitor_worker(tile_queue, candidate_queue, weights_path=None, batch_size=32, threshold=0.98):
     """
     The GPU worker process. Dynamically batches incoming tiles, runs inference,
     and forwards highly confident hits to the Skeptic.
