@@ -3,6 +3,10 @@ import sys
 import logging
 import multiprocessing as mp
 import time
+import cv2
+
+# Import the GPU worker we built previously
+from inquisitor import inquisitor_worker
 
 def setup_logging():
     logger = logging.getLogger("Andvari.Supervisor")
@@ -17,33 +21,37 @@ def setup_logging():
 logger = setup_logging()
 
 class Supervisor:
-    def __init__(self, raw_image_dir, output_dir, total_images=0, processed_counter=None):
+    # Notice we added weights_path here so the boss can hand it to the GPU
+    def __init__(self, raw_image_dir, output_dir, weights_path=None, total_images=0, processed_counter=None):
         """
         Orchestrates the multiprocessing swarm for field inference.
         """
         self.raw_image_dir = raw_image_dir
         self.output_dir = output_dir
+        self.weights_path = weights_path
         self.total_images = total_images
         self.processed_counter = processed_counter
         
         # The main queue fed by main.py
         self.raw_image_queue = mp.Queue()
         
-        # Ensure output directory exists for CSV/KML/Thumbnails
+        # The conveyor belts between your CPU Slicers and the GPU Inquisitor
+        # Capping the maxsize at 2000 so we don't accidentally fill your system RAM with waiting tiles
+        self.tile_queue = mp.Queue(maxsize=2000) 
+        self.candidate_queue = mp.Queue()
+        
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def worker_node(self, worker_id, in_queue, counter, total):
+    def worker_node(self, worker_id, in_queue, tile_queue, counter, total):
         """
-        The heavy lifting node. Pulls raw drone images from the queue, 
-        runs them through the CNN, filters anomalies, and translates coordinates.
+        The heavy lifting node. Pulls raw drone images, chops them into 224x224 bites in RAM, 
+        and throws them onto the GPU conveyor belt.
         """
         logger.debug(f"Worker {worker_id} spun up and waiting for operations.")
         
         while True:
-            # Grab the next 44MP image path from the queue
             task_path = in_queue.get()
             
-            # Check for the shutdown signal
             if task_path == "POISON_PILL":
                 logger.debug(f"Worker {worker_id} swallowed poison pill. Shutting down.")
                 break
@@ -51,44 +59,65 @@ class Supervisor:
             filename = os.path.basename(task_path)
             
             # ==========================================
-            # YOUR MODEL PIPELINE GOES HERE
+            # ACTUAL IN-MEMORY SLICING PIPELINE
             # ==========================================
-            # Example flow:
-            # 1. img_tensor = load_and_preprocess(task_path)
-            # 2. raw_hits = inquisitor.predict(img_tensor)
-            # 3. verified_hits = skeptic.filter(raw_hits)
-            # 4. cartographer.export_to_kml(verified_hits, self.output_dir)
-            
-            # Simulating GPU processing time for testing
-            time.sleep(0.5) 
+            img = cv2.imread(task_path)
+            if img is not None:
+                height, width, _ = img.shape
+                
+                # THE CRITICAL DIET FIX
+                tile_size = 224  
+                overlap = 0.2
+                stride = int(tile_size * (1.0 - overlap))
+                
+                # Chop the image directly in system RAM
+                for y in range(0, height - tile_size + 1, stride):
+                    for x in range(0, width - tile_size + 1, stride):
+                        tile = img[y:y+tile_size, x:x+tile_size]
+                        
+                        payload = {
+                            "parent_image": filename,
+                            "offset_x": x,
+                            "offset_y": y,
+                            "tile_data": tile
+                        }
+                        
+                        # Put the tile on the belt for the GPU
+                        tile_queue.put(payload)
             # ==========================================
             
             # --- THE HARDWARE-LOCKED PROGRESS TRACKER ---
             if counter is not None:
-                # The lock ensures two CPU cores don't write to the value at the exact same millisecond
                 with counter.get_lock():
                     counter.value += 1
                     current_n = counter.value
                     
                 logger.info(f"[{current_n} out of {total}] Finished evaluating {filename}")
             else:
-                # Fallback if someone runs it without the tracker
                 logger.info(f"Finished evaluating {filename}")
 
     def launch(self):
         """Ignites the multiprocessing swarm."""
         num_cores = mp.cpu_count()
-        logger.info(f"Supervisor is launching the swarm across {num_cores} logical CPU cores...")
         
+        # 1. Boot up the GPU process first
+        logger.info("Spawning Inquisitor GPU process...")
+        inquisitor_process = mp.Process(
+            target=inquisitor_worker, 
+            args=(self.tile_queue, self.candidate_queue, self.weights_path)
+        )
+        inquisitor_process.start()
+        
+        # 2. Launch the CPU Slicers
+        logger.info(f"Supervisor is launching the CPU Slicer swarm across {num_cores} cores...")
         workers = []
-        
-        # Spawn the workers
         for i in range(num_cores):
             p = mp.Process(
                 target=self.worker_node, 
                 args=(
                     i, 
                     self.raw_image_queue, 
+                    self.tile_queue, 
                     self.processed_counter, 
                     self.total_images
                 )
@@ -96,8 +125,12 @@ class Supervisor:
             workers.append(p)
             p.start()
             
-        # Wait for all processes to hit their POISON_PILL and spin down cleanly
+        # 3. Wait for all CPU workers to finish eating the raw images
         for p in workers:
             p.join()
+            
+        # 4. Now that the Slicers are done, tell the GPU to shut down once the belt is empty
+        self.tile_queue.put("POISON_PILL")
+        inquisitor_process.join()
             
         logger.info("Swarm execution complete. Pipeline shutdown successful.")
