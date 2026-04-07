@@ -11,53 +11,51 @@ logger = logging.getLogger("Andvari.Augmenter")
 
 def get_field_transforms():
     """
-    The augmentation pipeline. Matches ResNet18 requirements 
-    and simulates field conditions (lighting/rotation).
+    Standardizes input for ResNet18 and adds 'field' noise 
+    to make the model more robust to lighting changes.
     """
     return transforms.Compose([
-        transforms.Resize((224, 224)), # Standard ResNet input size
+        transforms.Resize((224, 224)), 
         transforms.ToTensor(),
         transforms.RandomHorizontalFlip(p=0.5),
         transforms.RandomVerticalFlip(p=0.5),
         transforms.RandomRotation(180),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
 def train_field_model(dataset_dir, base_weights_path, output_weights_path, epochs=10):
     """
-    Fine-tunes the ResNet18 base model on localized field data.
+    Fine-tunes the ResNet18 weights for the Andvari project.
     """
     logger.info("Augmenter Agent online. Spinning up the training forge...")
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type == "cpu":
-        logger.warning("Training on CPU. This will take a while.")
-
-    # 1. Setup Data Loading
+    
+    # 1. Setup Data Loading (Defining 'transform' correctly this time)
     transform = get_field_transforms()
     try:
         train_dataset = datasets.ImageFolder(dataset_dir, transform=transform)
-        # batch_size=8 is a safe middle ground for an RTX 2050
+        # Using a batch size of 8 to prevent CUDA Out of Memory on RTX 2050
         dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=0)
     except Exception as e:
-        logger.error(f"Failed to load dataset from {dataset_dir}: {e}")
+        logger.error(f"Failed to load dataset: {e}")
         return
 
-    # 2. Load and Modify the Model (ResNet18)
+    # 2. Initialize Model Architecture
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 2) # [Dirt, Meteorite]
+    model.fc = nn.Linear(num_ftrs, 2) # Binary: Dirt vs Meteorite
     
+    # 3. Load Base Weights
     try:
         model.load_state_dict(torch.load(base_weights_path))
-        logger.info(f"Base weights loaded from {base_weights_path}")
+        logger.info(f"Successfully loaded base weights: {base_weights_path}")
     except Exception as e:
-        logger.error(f"Could not load base weights: {e}")
+        logger.error(f"Base weights load failed: {e}")
         return
 
-    # 3. Freeze the early layers
-    # We keep the "visual" layers frozen and only train the final decision layers
+    # 4. Freeze Early Layers (Feature Extractors)
     for name, param in model.named_parameters():
         if "fc" not in name:
             param.requires_grad = False
@@ -65,24 +63,20 @@ def train_field_model(dataset_dir, base_weights_path, output_weights_path, epoch
     model.to(device)
     model.train()
 
-    # 4. Optimizer and Loss Function
+    # 5. Optimizer & Loss
     optimizer = optim.Adam(model.fc.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
-    # 5. The Training Loop
-    logger.info(f"Starting fine-tuning for {epochs} epochs on {len(train_dataset)} samples.")
-    
+    # 6. Training Loop
+    logger.info(f"Training for {epochs} epochs on {len(train_dataset)} field samples.")
     for epoch in range(epochs):
         running_loss = 0.0
-        
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
             
             optimizer.zero_grad()
-            
             outputs = model(inputs)
             loss = criterion(outputs, labels)
-            
             loss.backward()
             optimizer.step()
             
@@ -91,6 +85,6 @@ def train_field_model(dataset_dir, base_weights_path, output_weights_path, epoch
         avg_loss = running_loss / len(dataloader)
         logger.info(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.4f}")
 
-    # 6. Save the localized model
+    # 7. Save Final Weights
     torch.save(model.state_dict(), output_weights_path)
-    logger.info(f"Field-tuned weights forged and saved to {output_weights_path}")
+    logger.info(f"Tuned weights saved to {output_weights_path}")
