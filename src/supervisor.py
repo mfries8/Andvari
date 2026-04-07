@@ -1,110 +1,103 @@
-import multiprocessing as mp
+import os
 import sys
-import time
 import logging
-import asyncio
+import multiprocessing as mp
+import time
 
-# Force 'spawn' method to prevent CUDA context corruption on Linux
-if sys.platform.startswith('linux'):
-    try:
-        mp.set_start_method('spawn', force=True)
-    except RuntimeError:
-        pass # Already set
+def setup_logging():
+    logger = logging.getLogger("Andvari.Supervisor")
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    return logger
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("Andvari.Supervisor")
+logger = setup_logging()
 
 class Supervisor:
-    def __init__(self, raw_image_dir, output_dir):
+    def __init__(self, raw_image_dir, output_dir, total_images=0, processed_counter=None):
+        """
+        Orchestrates the multiprocessing swarm for field inference.
+        """
         self.raw_image_dir = raw_image_dir
         self.output_dir = output_dir
-        self.manager = mp.Manager()
+        self.total_images = total_images
+        self.processed_counter = processed_counter
         
-        # Inter-Process Communication Queues
-        # Manager queues allow safe data passing between isolated CPU/GPU processes
-        self.raw_image_queue = self.manager.Queue()     # Fed to Slicer
-        self.tile_queue = self.manager.Queue(maxsize=1000) # Slicer -> Inquisitor (VRAM buffer protection)
-        self.candidate_queue = self.manager.Queue()     # Inquisitor -> Skeptic (Initial hits)
-        self.verified_queue = self.manager.Queue()      # Skeptic -> Cartographer (Surviving hits)
+        # The main queue fed by main.py
+        self.raw_image_queue = mp.Queue()
         
-        # Process handles
-        self.processes = []
+        # Ensure output directory exists for CSV/KML/Thumbnails
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def worker_node(self, worker_id, in_queue, counter, total):
+        """
+        The heavy lifting node. Pulls raw drone images from the queue, 
+        runs them through the CNN, filters anomalies, and translates coordinates.
+        """
+        logger.debug(f"Worker {worker_id} spun up and waiting for operations.")
         
-    def _start_slicer(self):
-        # TODO: Import Slicer agent
-        logger.info("Spawning Slicer Agent (CPU Pool)...")
-        # p = mp.Process(target=slicer_worker, args=(self.raw_image_queue, self.tile_queue))
-        # p.start()
-        # self.processes.append(p)
-
-    def _start_inquisitor(self):
-        # TODO: Import Inquisitor agent
-        logger.info("Spawning Inquisitor Agent (GPU Node)...")
-        # p = mp.Process(target=inquisitor_worker, args=(self.tile_queue, self.candidate_queue))
-        # p.start()
-        # self.processes.append(p)
-
-    def _start_skeptic(self):
-        # TODO: Import Skeptic agent
-        logger.info("Spawning Skeptic Agent (CPU Pool)...")
-        # p = mp.Process(target=skeptic_worker, args=(self.candidate_queue, self.verified_queue))
-        # p.start()
-        # self.processes.append(p)
-
-    def _start_cartographer(self):
-        # TODO: Import Cartographer agent
-        logger.info("Spawning Cartographer Agent (CPU Node)...")
-        # p = mp.Process(target=cartographer_worker, args=(self.verified_queue, self.output_dir))
-        # p.start()
-        # self.processes.append(p)
-
-    async def monitor_swarm(self):
-        """Asynchronous loop to monitor queue depths and system health."""
-        logger.info("Supervisor monitoring initiated. Type Ctrl+C to abort the mission.")
-        try:
-            while True:
-                # Log queue sizes every 5 seconds to ensure we aren't bottlenecking
-                logger.info(
-                    f"Queue Status | Raw: {self.raw_image_queue.qsize()} | "
-                    f"Tiles: {self.tile_queue.qsize()} | "
-                    f"Candidates: {self.candidate_queue.qsize()} | "
-                    f"Verified: {self.verified_queue.qsize()}"
-                )
-                await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            logger.warning("Shutdown signal received. Killing the swarm.")
-            self.shutdown()
+        while True:
+            # Grab the next 44MP image path from the queue
+            task_path = in_queue.get()
+            
+            # Check for the shutdown signal
+            if task_path == "POISON_PILL":
+                logger.debug(f"Worker {worker_id} swallowed poison pill. Shutting down.")
+                break
+            
+            filename = os.path.basename(task_path)
+            
+            # ==========================================
+            # YOUR MODEL PIPELINE GOES HERE
+            # ==========================================
+            # Example flow:
+            # 1. img_tensor = load_and_preprocess(task_path)
+            # 2. raw_hits = inquisitor.predict(img_tensor)
+            # 3. verified_hits = skeptic.filter(raw_hits)
+            # 4. cartographer.export_to_kml(verified_hits, self.output_dir)
+            
+            # Simulating GPU processing time for testing
+            time.sleep(0.5) 
+            # ==========================================
+            
+            # --- THE HARDWARE-LOCKED PROGRESS TRACKER ---
+            if counter is not None:
+                # The lock ensures two CPU cores don't write to the value at the exact same millisecond
+                with counter.get_lock():
+                    counter.value += 1
+                    current_n = counter.value
+                    
+                logger.info(f"[{current_n} out of {total}] Finished evaluating {filename}")
+            else:
+                # Fallback if someone runs it without the tracker
+                logger.info(f"Finished evaluating {filename}")
 
     def launch(self):
-        """Ignites the pipeline."""
-        logger.info("Waking up Andvari...")
+        """Ignites the multiprocessing swarm."""
+        num_cores = mp.cpu_count()
+        logger.info(f"Supervisor is launching the swarm across {num_cores} logical CPU cores...")
         
-        # In a real run, we'd populate the raw_image_queue here by scanning the directory
+        workers = []
         
-        self._start_slicer()
-        self._start_inquisitor()
-        self._start_skeptic()
-        self._start_cartographer()
-        
-        # Start the async monitoring loop on the main thread
-        try:
-            asyncio.run(self.monitor_swarm())
-        except KeyboardInterrupt:
-            self.shutdown()
-
-    def shutdown(self):
-        """Gracefully (or violently) terminate all child processes."""
-        logger.info("Terminating all agent processes...")
-        for p in self.processes:
-            if p.is_alive():
-                p.terminate()
-                p.join()
-        logger.info("All processes dead. Returning to the void.")
-
-if __name__ == "__main__":
-    # Test execution
-    supervisor = Supervisor(raw_image_dir="./data/raw", output_dir="./data/output")
-    supervisor.launch()
+        # Spawn the workers
+        for i in range(num_cores):
+            p = mp.Process(
+                target=self.worker_node, 
+                args=(
+                    i, 
+                    self.raw_image_queue, 
+                    self.processed_counter, 
+                    self.total_images
+                )
+            )
+            workers.append(p)
+            p.start()
+            
+        # Wait for all processes to hit their POISON_PILL and spin down cleanly
+        for p in workers:
+            p.join()
+            
+        logger.info("Swarm execution complete. Pipeline shutdown successful.")
