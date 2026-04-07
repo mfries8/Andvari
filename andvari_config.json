@@ -1,0 +1,25 @@
+{
+    "camera": {
+        "fov_horizontal_deg": 77.0,
+        "image_width_px": 8192,
+        "image_height_px": 5460
+    },
+    "flight_defaults": {
+        "latitude": 36.1628,
+        "longitude": -82.8318,
+        "altitude_m": 2.0,
+        "heading_deg": 0.0
+    },
+    "slicer": {
+        "tile_size": 224,
+        "overlap": 0.2
+    },
+    "inquisitor": {
+        "batch_size": 32,
+        "confidence_threshold": 0.98
+    },
+    "skeptic": {
+        "confidence_threshold": 0.85,
+        "density_limit": 10
+    }
+}
