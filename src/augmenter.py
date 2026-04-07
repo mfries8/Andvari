@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision.models as models
 import torch.nn as nn
+from torchvision import datasets
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import logging
