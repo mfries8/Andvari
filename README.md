@@ -2,7 +2,7 @@
 
 [![Lint Status & Pytest](https://github.com/mfries8/Andvari/actions/workflows/ci.yml/badge.svg)](https://github.com/mfries8/Andvari/actions/workflows/ci.yml)
 
-> "That gold will be the death of whoever possesses it." — Andvari, probably right before his rocks got stolen.
+> "That gold will be the death of whoever possesses it." — Andvari, probably right before his rocks got stolen. Use this software responsibly and do not trespass.
 
 ## Overview
 Andvari is an automated, multi-agent machine learning pipeline designed to find freshly fallen meteorites using high-resolution drone photogrammetry. Because wandering aimlessly through a desert looking for a dark rock among millions of slightly lighter rocks is an inefficient use of human knees. 
