@@ -15,6 +15,8 @@ app = FastAPI(title="Andvari Rapid Review UI")
 OUTPUT_DIR = "./data/output"
 CSV_PATH = os.path.join(OUTPUT_DIR, "verified_candidates.csv")
 FINAL_CSV_PATH = os.path.join(OUTPUT_DIR, "final_deployment_targets.csv")
+POSTREVIEW_KML_PATH = os.path.join(OUTPUT_DIR, "verified_candidates_POSTREVIEW.kml")
+CACHE_PATH = os.path.join(OUTPUT_DIR, "flight_path_cache.json")
 THUMB_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
 
 # Mount the thumbnails directory so the web server can display the images
@@ -120,7 +122,50 @@ async def process_decision(candidate_id: str = Form(...), decision: str = Form(.
         logger.info(f"Candidate {candidate_id} REJECTED.")
         
     state.current_idx += 1
+    if state.current_idx >= len(state.candidates):
+        generate_post_review_kml()
     return RedirectResponse(url="/", status_code=303)
+
+def generate_post_review_kml():
+    import json
+    kml_header = """<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>Andvari Post-Review Candidates</name>\n"""
+    kml_footer = """  </Document>\n</kml>"""
+    
+    with open(POSTREVIEW_KML_PATH, 'w') as kml_file:
+        kml_file.write(kml_header)
+        kml_file.write("    <Folder>\n      <name>Approved Deployment Targets</name>\n")
+        if os.path.exists(FINAL_CSV_PATH):
+            with open(FINAL_CSV_PATH, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    placemark = f"""      <Placemark>
+        <name>Candidate {row['ID']}</name>
+        <description>Confidence: {row['Confidence']}</description>
+        <Point>
+          <coordinates>{row['Longitude']},{row['Latitude']},0</coordinates>
+        </Point>
+      </Placemark>\n"""
+                    kml_file.write(placemark)
+        kml_file.write("    </Folder>\n")
+        
+        if os.path.exists(CACHE_PATH):
+            kml_file.write("    <Folder>\n      <name>Drone Flight Path (Image Centers)</name>\n")
+            try:
+                with open(CACHE_PATH, 'r') as cf:
+                    flight_path = json.load(cf)
+                    for point in flight_path:
+                        placemark = f"""      <Placemark>
+        <name>{point['filename']}</name>
+        <Point>
+          <coordinates>{point['lon']},{point['lat']},0</coordinates>
+        </Point>
+      </Placemark>\n"""
+                        kml_file.write(placemark)
+            except Exception as e:
+                logger.warning(f"Failed to rebuild flight path from cache: {e}")
+            kml_file.write("    </Folder>\n")
+        kml_file.write(kml_footer)
+        logger.info(f"Post-review KML generated at {POSTREVIEW_KML_PATH}")
 
 def launch_auditor():
     """Starts the local web server."""

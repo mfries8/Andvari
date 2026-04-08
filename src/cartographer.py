@@ -36,6 +36,11 @@ def generate_kml(csv_path, kml_path, raw_image_dir=None):
         if raw_image_dir and os.path.exists(raw_image_dir):
             kml_file.write("    <Folder>\n      <name>Drone Flight Path (Image Centers)</name>\n")
             try:
+                import json
+                output_dir = os.path.dirname(kml_path)
+                cache_path = os.path.join(output_dir, "flight_path_cache.json")
+                flight_path_cache = []
+
                 from slicer import TelemetryParser
                 parser = TelemetryParser()
                 valid_exts = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
@@ -46,6 +51,7 @@ def generate_kml(csv_path, kml_path, raw_image_dir=None):
                         lat = telemetry.get('lat', 0.0)
                         lon = telemetry.get('lon', 0.0)
                         if lat != 0.0 and lon != 0.0:
+                            flight_path_cache.append({"filename": f, "lat": lat, "lon": lon})
                             placemark = f"""      <Placemark>
         <name>{f}</name>
         <Point>
@@ -53,6 +59,10 @@ def generate_kml(csv_path, kml_path, raw_image_dir=None):
         </Point>
       </Placemark>\n"""
                             kml_file.write(placemark)
+                
+                with open(cache_path, 'w') as cf:
+                    json.dump(flight_path_cache, cf, indent=2)
+
             except Exception as e:
                 logger.warning(f"Could not cleanly add flight path to KML: {e}")
             kml_file.write("    </Folder>\n")
@@ -63,7 +73,7 @@ def cartographer_worker(verified_queue, output_dir, config=None, raw_image_dir=N
     logger.info("Cartographer Agent online. Mapping the treasure.")
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(output_dir, "verified_candidates.csv")
-    kml_path = os.path.join(output_dir, "verified_candidates.kml")
+    kml_path = os.path.join(output_dir, "verified_candidates_RAW.kml")
     thumb_dir = os.path.join(output_dir, "thumbnails")
     os.makedirs(thumb_dir, exist_ok=True)
     

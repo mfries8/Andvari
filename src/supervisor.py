@@ -29,9 +29,9 @@ class Supervisor:
         self.config = config
 
         self.raw_image_queue = mp.Queue()
-        self.tile_queue = mp.Queue(maxsize=100) 
+        self.tile_queue = mp.Queue(maxsize=100)
         self.candidate_queue = mp.Queue()
-        self.verified_queue = mp.Queue() 
+        self.verified_queue = mp.Queue()
         
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -65,7 +65,7 @@ class Supervisor:
             args=(self.tile_queue, self.candidate_queue, self.weights_path, self.config)
         )
         inquisitor_process.start()
-        
+
         logger.info(f"Supervisor is launching the CPU Slicer swarm via Pool across {num_cores} cores...")
         
         tile_size = self.config["slicer"]["tile_size"] if self.config else 224

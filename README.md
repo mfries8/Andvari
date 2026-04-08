@@ -1,5 +1,7 @@
 # Andvari
 
+[![Lint Status & Pytest](https://github.com/mfries8/Andvari/actions/workflows/ci.yml/badge.svg)](https://github.com/mfries8/Andvari/actions/workflows/ci.yml)
+
 > "That gold will be the death of whoever possesses it." — Andvari, probably right before his rocks got stolen.
 
 ## Overview
@@ -60,6 +62,14 @@ python -c "import torch; print('GPU Available:', torch.cuda.is_available()); pri
 
 If this returns `False` or `CPU`, reinstall the CUDA-enabled version of PyTorch. Do not proceed until this prints your GPU's name.
 
+### Developer & Testing Setup
+If you plan to contribute to Andvari, please install the developer tools and run the test suite offline before submitting a PR.
+```bash
+pip install -r requirements-dev.txt
+flake8 src/ tests/
+pytest tests/ -v
+```
+
 ## Data Management & Folder Structure
 Before running any scripts, you must set up your data directories. **Crucial Rule: Do not reuse or overwrite folders between flights.** In field operations, data provenance is everything. 
 
@@ -93,13 +103,17 @@ The neural network is highly specialized to the specific dirt, vegetation, and l
 * **When to REUSE weights (Skip Steps 1 & 2):** If you are flying back-to-back grids over the same terrain, on the same day, under similar weather conditions, skip the training. Proceed directly to Step 3 with your existing `.pth` file.
 * **When to RETRAIN (Run Steps 1 & 2):** You MUST fly a new calibration patch and retrain the model if you change locations (e.g., dry lake to grassy field), if the lighting drastically changes (heavy overcast vs. high noon), or if the terrain gets wet (which completely alters soil albedo). 
 
-### Step 0: Download the Base Neural Brain
-Before you process your first batch of images, you need the foundational network structure (`base.pth`). Run the built-in generator script from the project root to fetch the pre-trained ImageNet core and format it for our binary `[Dirt, Meteorite]` classifier:
+### Step 0: Download the Base Neural Brain (One-Time Setup)
+**⚠️ DO THIS IN THE LAB/HOTEL/ETC. BEFORE LEAVING FOR THE FIELD.** 
+
+Before you process your first batch of images in the field, your laptop needs the foundational network structure (`base.pth`). This base brain is entirely generic and can be reused infinitely in any environment, so **you only ever need to run this step once**.
+
+Because fetching these core weights requires an active internet connection, run the built-in generator script from the project root while you still have Wi-Fi:
 
 ```bash
 python generate_base.py
 ```
-This will automatically construct your default weights in `./models/base.pth`.
+This will download the pre-trained ImageNet core, reformat it for our binary `[Dirt, Meteorite]` classifier, and save it entirely offline to `./models/base.pth`. Once you are at the search site, the Step 2 training pipeline will natively load this pristine, offline reference file as its starting point every single time you need to reset and retrain.
 
 ### Step 1: Prepare Training Data (`slice`)
 Before you can train the model on a new environment, you need to chop your calibration flights into digestible tiles. 
