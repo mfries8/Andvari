@@ -116,11 +116,13 @@ python generate_base.py
 This will download the pre-trained ImageNet core, reformat it for our binary `[Dirt, Meteorite]` classifier, and save it entirely offline to `./models/base.pth`. Once you are at the search site, the Step 2 training pipeline will natively load this pristine, offline reference file as its starting point every single time you need to reset and retrain.
 
 ### Step 1: Prepare Training Data (`slice`)
-Before you can train the model on a new environment, you need to chop your calibration flights into digestible tiles. 
+Before you can train the model on a new environment, you need to identify the proxy meteorites in your "positive" training set and chop your calibration flights into digestible tiles. 
 
 *Hardware Note:* Mobile GPUs (like the RTX 2050) will run Out of Memory (OOM) if you try to train on native 512x512 tiles. You must use `--tile_size 224` to match the native ResNet18 architecture and save VRAM.
 
 1. Fly a calibration patch seeded with your painted proxy meteorites.
+    1a. Postitive Training Set: Collect ~20x20m suite of images on a surface representative of your field site, with 50-100 painted rock proxy meteorites scattered across it.
+    1b. Negative Training Set: Collect ~20x20m suite of images on a surface representative of your field site, with no painted rock proxy meteorites scattered across it.
 2. Dump the raw images into your `./data/raw_training_data/` folder inside either `positive/` or `negative/` subfolders.
 3. Run the Slicer with the annotation and tile_size flags:
 
@@ -142,7 +144,7 @@ python src/main.py train --dataset ./data/sliced_training_data/ --base_weights .
 ```
 
 ### Step 3: The Main Search (`pipeline`)
-Once you have flown the massive grid search over the target fall ellipse, dump the raw SD card images into your `raw_test_data` directory and unleash the swarm:
+Fly a grid search over the strewn field, dump the raw SD card images into your `raw_test_data` directory and unleash the swarm:
 
 ```bash
 python src/main.py pipeline --input ./data/raw_test_data/ --output ./data/output/ --weights ./models/field_1_tuned.pth
@@ -157,4 +159,4 @@ Once the pipeline finishes, review the surviving candidates before deploying fie
 python src/main.py review
 ```
 
-This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `.csv`.
+This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `.csv` and a Google Earth .kml file. The .kml file can be opened in Google Earth to visualize the locations of the approved candidates as well as the drone flight path.
