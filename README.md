@@ -160,3 +160,5 @@ python src/main.py review
 ```
 
 This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `.csv` and a Google Earth .kml file. The .kml file can be opened in Google Earth to visualize the locations of the approved candidates as well as the drone flight path.
+
+To adjust the sensitivity of the model, adjust the **'confidence_threshold'** value in the andvari_config.json file prior to running the code. Alternatively you can set the threshold with the `--threshold` flag in the pipeline command. A higher value will increase sensitivity (fewer false positives, but more missed meteorites), while a lower value will decrease sensitivity (more false positives, but fewer missed meteorites). A value of 0.85 is a good starting point.
