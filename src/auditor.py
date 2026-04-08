@@ -54,12 +54,19 @@ HTML_TEMPLATE = """
         <br>
         <form action="/submit" method="post">
             <input type="hidden" name="candidate_id" value="{{ candidate['ID'] }}">
+            <button type="submit" name="decision" value="back" class="btn" style="background-color: #555;">BACK</button>
             <button type="submit" name="decision" value="approve" class="btn btn-approve">APPROVE (Deploy)</button>
             <button type="submit" name="decision" value="reject" class="btn btn-reject">REJECT (Junk)</button>
         </form>
     {% else %}
         <h2>All candidates reviewed!</h2>
+        <p>Meteorites approved: {{ approved_count }}</p>
+        <p>Make sure to save the data in the /data/output/ folder for this run.</p>
         <p>The final deployment list has been saved to: <br> <code>{{ final_csv }}</code></p>
+        <form action="/submit" method="post">
+            <input type="hidden" name="candidate_id" value="none">
+            <button type="submit" name="decision" value="back" class="btn" style="background-color: #555;">BACK</button>
+        </form>
     {% endif %}
 </body>
 </html>
@@ -79,6 +86,22 @@ class ReviewState:
             reader = csv.DictReader(f)
             self.candidates = list(reader)
             
+    def undo_approval(self, candidate_id):
+        if not os.path.exists(FINAL_CSV_PATH):
+            return
+        with open(FINAL_CSV_PATH, 'r') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames
+            
+        rows = [r for r in rows if str(r['ID']) != str(candidate_id)]
+        
+        with open(FINAL_CSV_PATH, 'w', newline='') as f:
+            if fieldnames:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
     def save_approval(self, candidate_id):
         candidate = next((c for c in self.candidates if c['ID'] == candidate_id), None)
         if candidate:
@@ -105,16 +128,28 @@ async def review_ui(request: Request):
         # Fix path formatting for the web server by retaining only the filename since it mounts to /thumbnails
         candidate['Thumbnail'] = os.path.basename(candidate['Thumbnail'])
         
+    approved_count = 0
+    if os.path.exists(FINAL_CSV_PATH):
+        with open(FINAL_CSV_PATH, 'r') as f:
+            approved_count = max(0, sum(1 for line in f) - 1)
+
     return templates.TemplateResponse(request, "template.html", {
         "candidate": candidate,
         "current_idx": state.current_idx,
         "total": len(state.candidates),
-        "final_csv": FINAL_CSV_PATH
+        "final_csv": FINAL_CSV_PATH,
+        "approved_count": approved_count
     })
 
 @app.post("/submit")
 async def process_decision(candidate_id: str = Form(...), decision: str = Form(...)):
     """Handles the user's click and advances the queue."""
+    if decision == "back":
+        if state.current_idx > 0:
+            state.current_idx -= 1
+            state.undo_approval(state.candidates[state.current_idx]['ID'])
+        return RedirectResponse(url="/", status_code=303)
+
     if decision == "approve":
         state.save_approval(candidate_id)
         logger.info(f"Candidate {candidate_id} APPROVED for recovery.")
@@ -129,6 +164,22 @@ async def process_decision(candidate_id: str = Form(...), decision: str = Form(.
 def generate_post_review_kml():
     import json
     kml_header = """<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>Andvari Post-Review Candidates</name>\n"""
+    kml_header += """    <Style id="dronePosition">
+      <IconStyle>
+        <color>ffffffff</color>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+    <Style id="meteoritePosition">
+      <IconStyle>
+        <color>ff00ffff</color>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/shapes/polygon.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>\n"""
     kml_footer = """  </Document>\n</kml>"""
     
     with open(POSTREVIEW_KML_PATH, 'w') as kml_file:
@@ -141,6 +192,7 @@ def generate_post_review_kml():
                     placemark = f"""      <Placemark>
         <name>Candidate {row['ID']}</name>
         <description>Confidence: {row['Confidence']}</description>
+        <styleUrl>#meteoritePosition</styleUrl>
         <Point>
           <coordinates>{row['Longitude']},{row['Latitude']},0</coordinates>
         </Point>
@@ -156,6 +208,7 @@ def generate_post_review_kml():
                     for point in flight_path:
                         placemark = f"""      <Placemark>
         <name>{point['filename']}</name>
+        <styleUrl>#dronePosition</styleUrl>
         <Point>
           <coordinates>{point['lon']},{point['lat']},0</coordinates>
         </Point>

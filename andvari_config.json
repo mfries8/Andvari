@@ -23,6 +23,6 @@
         "_comment_threshold": "Minimum probability score required after the CPU rotates and re-evaluates the candidate 3 times to weed out false positives.",
         "confidence_threshold": 0.85,
         "_comment_density": "Maximum number of candidates allowed per 44MP image. Automatically discards massive clusters caused by lighting glitches or specific terrain features.",
-        "density_limit": 10
+        "density_limit": 25
     }
 }

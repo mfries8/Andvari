@@ -13,6 +13,22 @@ R_EARTH = 6378137.0
 
 def generate_kml(csv_path, kml_path, raw_image_dir=None):
     kml_header = """<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>Andvari Verified Candidates</name>\n"""
+    kml_header += """    <Style id="dronePosition">
+      <IconStyle>
+        <color>ffffffff</color>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+    <Style id="meteoritePosition">
+      <IconStyle>
+        <color>ff00ffff</color>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/shapes/polygon.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>\n"""
     kml_footer = """  </Document>\n</kml>"""
     
     with open(kml_path, 'w') as kml_file:
@@ -26,6 +42,7 @@ def generate_kml(csv_path, kml_path, raw_image_dir=None):
                     placemark = f"""      <Placemark>
         <name>Candidate {row['ID']}</name>
         <description>Confidence: {row['Confidence']}</description>
+        <styleUrl>#meteoritePosition</styleUrl>
         <Point>
           <coordinates>{row['Longitude']},{row['Latitude']},0</coordinates>
         </Point>
@@ -54,6 +71,7 @@ def generate_kml(csv_path, kml_path, raw_image_dir=None):
                             flight_path_cache.append({"filename": f, "lat": lat, "lon": lon})
                             placemark = f"""      <Placemark>
         <name>{f}</name>
+        <styleUrl>#dronePosition</styleUrl>
         <Point>
           <coordinates>{lon},{lat},0</coordinates>
         </Point>

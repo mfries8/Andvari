@@ -150,6 +150,10 @@ Fly a grid search over the strewn field, dump the raw SD card images into your `
 python src/main.py pipeline --input ./data/raw_test_data/ --output ./data/output/ --weights ./models/field_1_tuned.pth
 ```
 
+*Sensitivity:* To adjust the sensitivity of the model, adjust the **'confidence_threshold'** value in the andvari_config.json file prior to running the code. Alternatively you can set the threshold with the `--threshold` flag in the pipeline command. A higher value will increase sensitivity (fewer false positives, but more missed meteorites), while a lower value will decrease sensitivity (more false positives, but fewer missed meteorites). A value of 0.85 is a good starting point.
+
+*Density Limit:* To adjust the density limit of the model, adjust the **'density_limit'** value in the andvari_config.json file prior to running the code. Alternatively you can set the limit with the `--density_limit` flag in the pipeline command. A higher value will increase the density limit (more false positives, but fewer missed meteorites), while a lower value will decrease the density limit (fewer false positives, but more missed meteorites). A value of 25 is a good starting point.
+
 *Note: The Supervisor will output `[n out of N]` progress trackers to the console so you can monitor the GPU's pace.*
 
 ### Step 4: Human Verification (`review`)
@@ -160,5 +164,3 @@ python src/main.py review
 ```
 
 This will launch a local web UI (typically at `http://127.0.0.1:8000`). Click through the cropped thumbnails to "Approve" or "Reject" hits. Approvals are automatically appended to a final deployment `.csv` and a Google Earth .kml file. The .kml file can be opened in Google Earth to visualize the locations of the approved candidates as well as the drone flight path.
-
-To adjust the sensitivity of the model, adjust the **'confidence_threshold'** value in the andvari_config.json file prior to running the code. Alternatively you can set the threshold with the `--threshold` flag in the pipeline command. A higher value will increase sensitivity (fewer false positives, but more missed meteorites), while a lower value will decrease sensitivity (more false positives, but fewer missed meteorites). A value of 0.85 is a good starting point.
