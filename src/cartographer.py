@@ -11,27 +11,55 @@ logger = logging.getLogger("Andvari.Cartographer")
 
 R_EARTH = 6378137.0 
 
-def generate_kml(csv_path, kml_path):
+def generate_kml(csv_path, kml_path, raw_image_dir=None):
     kml_header = """<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n  <Document>\n    <name>Andvari Verified Candidates</name>\n"""
     kml_footer = """  </Document>\n</kml>"""
     
     with open(kml_path, 'w') as kml_file:
         kml_file.write(kml_header)
+        
+        kml_file.write("    <Folder>\n      <name>Verified Candidates</name>\n")
         if os.path.exists(csv_path):
             with open(csv_path, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    placemark = f"""    <Placemark>
-      <name>Candidate {row['ID']}</name>
-      <description>Confidence: {row['Confidence']}</description>
-      <Point>
-        <coordinates>{row['Longitude']},{row['Latitude']},0</coordinates>
-      </Point>
-    </Placemark>\n"""
+                    placemark = f"""      <Placemark>
+        <name>Candidate {row['ID']}</name>
+        <description>Confidence: {row['Confidence']}</description>
+        <Point>
+          <coordinates>{row['Longitude']},{row['Latitude']},0</coordinates>
+        </Point>
+      </Placemark>\n"""
                     kml_file.write(placemark)
+        kml_file.write("    </Folder>\n")
+        
+        if raw_image_dir and os.path.exists(raw_image_dir):
+            kml_file.write("    <Folder>\n      <name>Drone Flight Path (Image Centers)</name>\n")
+            try:
+                from slicer import TelemetryParser
+                parser = TelemetryParser()
+                valid_exts = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+                for f in os.listdir(raw_image_dir):
+                    if f.lower().endswith(valid_exts):
+                        img_path = os.path.join(raw_image_dir, f)
+                        telemetry = parser.extract(img_path)
+                        lat = telemetry.get('lat', 0.0)
+                        lon = telemetry.get('lon', 0.0)
+                        if lat != 0.0 and lon != 0.0:
+                            placemark = f"""      <Placemark>
+        <name>{f}</name>
+        <Point>
+          <coordinates>{lon},{lat},0</coordinates>
+        </Point>
+      </Placemark>\n"""
+                            kml_file.write(placemark)
+            except Exception as e:
+                logger.warning(f"Could not cleanly add flight path to KML: {e}")
+            kml_file.write("    </Folder>\n")
+
         kml_file.write(kml_footer)
 
-def cartographer_worker(verified_queue, output_dir, config=None):
+def cartographer_worker(verified_queue, output_dir, config=None, raw_image_dir=None):
     logger.info("Cartographer Agent online. Mapping the treasure.")
     os.makedirs(output_dir, exist_ok=True)
     csv_path = os.path.join(output_dir, "verified_candidates.csv")
@@ -58,7 +86,7 @@ def cartographer_worker(verified_queue, output_dir, config=None):
             
         if payload == "SHUTDOWN_COMMAND":
             logger.info("Cartographer received shutdown command. Finalizing KML and shutting down.")
-            generate_kml(csv_path, kml_path)
+            generate_kml(csv_path, kml_path, raw_image_dir)
             break
             
         try:
@@ -85,8 +113,8 @@ def cartographer_worker(verified_queue, output_dir, config=None):
             dx_m = delta_px_x * gsd
             dy_m = delta_px_y * gsd
             
-            dx_east = dx_m * math.cos(drone_heading) - dy_m * math.sin(drone_heading)
-            dy_north = dx_m * math.sin(drone_heading) + dy_m * math.cos(drone_heading)
+            dx_east = dx_m * math.cos(drone_heading) + dy_m * math.sin(drone_heading)
+            dy_north = -dx_m * math.sin(drone_heading) + dy_m * math.cos(drone_heading)
             
             delta_lat = (dy_north / R_EARTH) * (180.0 / math.pi)
             delta_lon = (dx_east / (R_EARTH * math.cos(math.pi * drone_lat / 180.0))) * (180.0 / math.pi)

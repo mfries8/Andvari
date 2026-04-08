@@ -70,6 +70,28 @@ class TelemetryParser:
                         telemetry["alt"] = safe_float(alt)
                 else:
                     logger.warning(f"[MISSING DATA] No GPS block found in {os.path.basename(image_path)}")
+            
+            # Extract DJI-specific XMP metadata for exact drone heading and True AGL (RelativeAltitude)
+            try:
+                import re
+                with open(image_path, 'rb') as f_xmp:
+                    raw_data = f_xmp.read()
+                    xmp_begin = raw_data.find(b'<x:xmpmeta')
+                    xmp_end = raw_data.find(b'</x:xmpmeta>')
+                    if xmp_begin != -1 and xmp_end != -1:
+                        xmp_str = raw_data[xmp_begin:xmp_end+12].decode('utf-8', 'ignore')
+                        
+                        heading_match = re.search(r'FlightYawDegree="([^"]+)"', xmp_str)
+                        if heading_match:
+                            telemetry['heading'] = float(heading_match.group(1))
+                        
+                        relative_alt_match = re.search(r'RelativeAltitude="([^"]+)"', xmp_str)
+                        if relative_alt_match:
+                            telemetry['alt'] = float(relative_alt_match.group(1))
+            except Exception as xmp_e:
+                logger.warning(f"[XMP WARNING] Could not parse XMP payload for {os.path.basename(image_path)}: {xmp_e}")
+                
+
         except Exception as e:
             logger.warning(f"[FATAL EXIF CRASH] Failed to extract GPS for {image_path}: {e}")
         return telemetry

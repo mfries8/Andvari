@@ -104,8 +104,7 @@ async def review_ui(request: Request):
         # Fix path formatting for the web server by retaining only the filename since it mounts to /thumbnails
         candidate['Thumbnail'] = os.path.basename(candidate['Thumbnail'])
         
-    return templates.TemplateResponse("template.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "template.html", {
         "candidate": candidate,
         "current_idx": state.current_idx,
         "total": len(state.candidates),

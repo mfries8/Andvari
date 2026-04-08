@@ -17,7 +17,7 @@
         "_comment_batch": "Number of tiles processed simultaneously by the GPU. Lower this to 16 or 8 if you experience CUDA 'Out of Memory' crashes.",
         "batch_size": 32,
         "_comment_threshold": "Minimum probability score (0.0 to 1.0) required for the raw GPU to flag a tile as a potential meteorite.",
-        "confidence_threshold": 0.70
+        "confidence_threshold": 0.40
     },
     "skeptic": {
         "_comment_threshold": "Minimum probability score required after the CPU rotates and re-evaluates the candidate 3 times to weed out false positives.",

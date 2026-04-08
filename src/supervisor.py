@@ -48,7 +48,7 @@ class Supervisor:
         logger.info("Spawning Cartographer process...")
         cartographer_process = mp.Process(
             target=cartographer_worker, 
-            args=(self.verified_queue, self.output_dir, self.config)
+            args=(self.verified_queue, self.output_dir, self.config, self.raw_image_dir)
         )
         cartographer_process.start()
 
