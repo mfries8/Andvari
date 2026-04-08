@@ -167,16 +167,20 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
 
     if pos_images:
         total_pos = len(pos_images)
-        logger.info(f"Loading {total_pos} positive images. Click targets, SPACEBAR to advance.")
+        logger.info(f"Loading {total_pos} positive images for annotation.")
+        logger.info("Controls: [SPACE / f] Next | [b] Back | [z] Undo last click | [r] Clear all clicks | [ESC] Save & Exit Early")
         
-        # We wrap the loop in enumerate to track the current index
-        for current_idx, img_path in enumerate(pos_images, start=1):
+        img_targets = {path: [] for path in pos_images}
+        idx = 0
+        
+        while idx < total_pos:
+            img_path = pos_images[idx]
             img = cv2.imread(img_path)
             if img is None:
+                idx += 1
                 continue
 
-            # --- THE NEW PROGRESS LOGGER ---
-            logger.info(f"Image [{current_idx} out of {total_pos}]: Annotating {os.path.basename(img_path)}")
+            logger.info(f"Image [{idx + 1} out of {total_pos}]: Annotating {os.path.basename(img_path)}")
 
             orig_h, orig_w = img.shape[:2]
             ui_height = 900
@@ -185,7 +189,13 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
 
             ui_img = cv2.resize(img, (ui_width, ui_height))
             clone = ui_img.copy()
-            targets = []
+            targets = img_targets[img_path]
+
+            # Redraw existing targets if previously visited
+            for (tx, ty) in targets:
+                x_ui = int(tx / scale_factor)
+                y_ui = int(ty / scale_factor)
+                cv2.circle(ui_img, (x_ui, y_ui), 5, (0, 255, 0), -1)
 
             def click_event(event, x, y, flags, param):
                 if event == cv2.EVENT_LBUTTONDOWN:
@@ -196,16 +206,55 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
             cv2.namedWindow("Andvari Annotator")
             cv2.setMouseCallback("Andvari Annotator", click_event)
             
+            nav_direction = 1
+            exit_early = False
+            
             while True:
                 cv2.imshow("Andvari Annotator", ui_img)
                 key = cv2.waitKey(1) & 0xFF
-                if key == 32: # SPACEBAR
+                if key == 32 or key == ord('f'): # SPACEBAR or 'f'
+                    nav_direction = 1
                     break
+                elif key == 27: # ESC
+                    exit_early = True
+                    break
+                elif key == ord('b'): # Back
+                    if idx > 0:
+                        nav_direction = -1
+                        break
+                    else:
+                        logger.warning("Already at the first image.")
+                elif key == ord('z'): # Undo
+                    if targets:
+                        targets.pop()
+                        ui_img = clone.copy() # redraw base
+                        for (tx, ty) in targets: # redraw remaining
+                            x_ui = int(tx / scale_factor)
+                            y_ui = int(ty / scale_factor)
+                            cv2.circle(ui_img, (x_ui, y_ui), 5, (0, 255, 0), -1)
                 elif key == ord('r'): # Reset drawing
                     ui_img = clone.copy()
                     targets.clear()
+            
+            if exit_early:
+                break
+                
+            idx += nav_direction
 
-            half_tile = tile_size // 2
+        cv2.destroyAllWindows()
+        
+        # Save crops after annotation session
+        logger.info("Extracting positive targets...")
+        half_tile = tile_size // 2
+        for img_path, targets in img_targets.items():
+            if not targets:
+                continue
+                
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+                
+            orig_h, orig_w = img.shape[:2]
             for i, (tx, ty) in enumerate(targets):
                 y1 = max(0, ty - half_tile)
                 y2 = min(orig_h, ty + half_tile)
@@ -218,8 +267,6 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
                 positive_tile = img[y1:y2, x1:x2]
                 out_path = os.path.join(pos_out, f"{os.path.basename(img_path)}_pos_{i}.jpg")
                 cv2.imwrite(out_path, positive_tile)
-                
-        cv2.destroyAllWindows()
 
     # ==========================================
     # PHASE 2: Silent Auto-Mining (No UI)
