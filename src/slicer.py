@@ -149,18 +149,20 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
     pos_in = os.path.join(input_dir, "positive")
     neg_in = os.path.join(input_dir, "negative")
 
+    valid_exts = ('.png', '.jpg', '.jpeg', '.tif', '.tiff')
+    
     # ==========================================
     # PHASE 1: Targeted Annotation (UI)
     # ==========================================
     if os.path.exists(pos_in):
         logger.info("Found positive folder. Launching UI for targeted annotation.")
-        pos_images = glob.glob(os.path.join(pos_in, "*.[jJ][pP][gG]"))
+        pos_images = [os.path.join(pos_in, f) for f in os.listdir(pos_in) if f.lower().endswith(valid_exts)]
     else:
         logger.warning("No positive folder found. Defaulting to all images in input directory.")
-        pos_images = glob.glob(os.path.join(input_dir, "*.[jJ][pP][gG]"))
+        pos_images = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.lower().endswith(valid_exts)]
 
     if not pos_images and not os.path.exists(neg_in):
-        logger.error(f"No valid .jpg images found in {input_dir} to process. Ending early.")
+        logger.error(f"No valid images (JPG/PNG/TIF) found in {input_dir} to process. Ending early.")
         return
 
     if pos_images:
@@ -224,7 +226,7 @@ def generate_training_data(input_dir, output_dir, tile_size=224):
     # ==========================================
     if os.path.exists(neg_in):
         logger.info("Found negative folder. Silently mining background noise...")
-        neg_images = glob.glob(os.path.join(neg_in, "*.[jJ][pP][gG]"))
+        neg_images = [os.path.join(neg_in, f) for f in os.listdir(neg_in) if f.lower().endswith(valid_exts)]
         
         for img_path in neg_images:
             img = cv2.imread(img_path)
