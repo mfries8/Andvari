@@ -219,6 +219,15 @@ def generate_post_review_kml():
             kml_file.write("    </Folder>\n")
         kml_file.write(kml_footer)
         logger.info(f"Post-review KML generated at {POSTREVIEW_KML_PATH}")
+        
+        import threading
+        import signal
+        import time
+        def _shutdown():
+            time.sleep(1.0)
+            logger.info("Terminating Auditor process as requested.")
+            os.kill(os.getpid(), signal.SIGINT)
+        threading.Thread(target=_shutdown, daemon=True).start()
 
 def launch_auditor():
     """Starts the local web server."""
