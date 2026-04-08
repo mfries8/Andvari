@@ -39,9 +39,8 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <h1>Candidate Review ({{ current_idx + 1 }} / {{ total }})</h1>
-    
     {% if candidate %}
+        <h1>Candidate Review ({{ current_idx + 1 }} / {{ total }})</h1>
         <img src="/thumbnails/{{ candidate['Thumbnail'] }}" alt="Meteorite Candidate">
         <br>
         <div class="data-panel">
